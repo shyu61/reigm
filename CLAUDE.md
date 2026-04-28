@@ -22,10 +22,14 @@
 
 - Use `print()` rather than `click.echo()` for stdout output, even in click-based CLIs.
 
+## Scraping
+
+- For scraping HTTP requests, use `curl-cffi` with Safari impersonation (e.g. `impersonate="safari18_0"`).
+
 ## Exp Scripts
 
-- In `exp/` scripts, prefer module-level constants over click options for values that don't need to vary across runs (e.g., output paths). Reserve click options for inputs the user is likely to override.
-- Derive the output directory from the script filename rather than hardcoding it, so renaming the script automatically retargets its output:
+- Prefer module-level constants over click options for values that don't need to vary across runs.
+- Derive the output directory from the script filename:
 
   ```python
   SCRIPT_PATH = Path(__file__).resolve()
