@@ -18,7 +18,12 @@ from curl_cffi import requests
 from proxy import dataimpulse_rotating_proxy_url
 from utils import jitter_sleep
 
-DEFAULT_URL = "https://suumo.jp/jj/chintai/ichiran/FR301FC001/?ar=030&bs=040&ta=13"
+DEFAULT_URL = (
+    "https://suumo.jp/jj/chintai/ichiran/FR301FC001/?ar=030&bs=040&ta=13"
+    "&sc=13101&sc=13102&sc=13103&sc=13104&sc=13105&sc=13106&sc=13107&sc=13108"
+    "&sc=13109&sc=13110&sc=13111&sc=13112&sc=13113&sc=13114&sc=13115&sc=13116"
+    "&sc=13117&sc=13118&sc=13119&sc=13120&sc=13121&sc=13122&sc=13123"
+)
 DETAIL_URL_BASE = "https://suumo.jp"
 LISTING_ID_PATTERN = re.compile(r"/chintai/(jnc_\d+)/")
 IMPERSONATE_TARGET = "safari18_0"
@@ -32,9 +37,9 @@ OUTPUT_DIR = SCRIPT_PATH.parent.parent / "data" / SCRIPT_PATH.stem
 def build_page_url(base_url: str, page: int) -> str:
     """Return `base_url` with `page=<n>` set in the query string."""
     parsed = urllib.parse.urlparse(base_url)
-    query = dict(urllib.parse.parse_qsl(parsed.query, keep_blank_values=True))
-    query["page"] = str(page)
-    return urllib.parse.urlunparse(parsed._replace(query=urllib.parse.urlencode(query)))
+    pairs = [(k, v) for k, v in urllib.parse.parse_qsl(parsed.query, keep_blank_values=True) if k != "page"]
+    pairs.append(("page", str(page)))
+    return urllib.parse.urlunparse(parsed._replace(query=urllib.parse.urlencode(pairs)))
 
 
 def _text(node: Tag | None) -> str:
