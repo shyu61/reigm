@@ -1,19 +1,24 @@
-"""Fetch SUUMO rental search result pages and save raw HTML.
+"""Fetch SUUMO rental search result pages and save listings as JSON.
 
-Default target is a Tokyo (23-ku) rental listing page. Each fetched page is
-saved as `page_{n:03d}.html` under `data/001_fetch_suumo/`. A small JSON
-manifest records the URL, status code, and byte size for each page.
+Default target is a Tokyo rental listing search. Each building (cassetteitem)
+contains one or more rooms; the script flattens them into a single list of
+room records with building-level fields duplicated. Output is written to
+`data/001_fetch_suumo/listings.json`.
 """
 
 import json
+import re
 import time
+import urllib.parse
 from pathlib import Path
-from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 import click
 import httpx
+from bs4 import BeautifulSoup, Tag
 
 DEFAULT_URL = "https://suumo.jp/jj/chintai/ichiran/FR301FC001/?ar=030&bs=040&ta=13"
+DETAIL_URL_BASE = "https://suumo.jp"
+LISTING_ID_PATTERN = re.compile(r"/chintai/(jnc_\d+)/")
 USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -26,11 +31,64 @@ OUTPUT_DIR = SCRIPT_PATH.parent.parent / "data" / SCRIPT_PATH.stem
 
 
 def build_page_url(base_url: str, page: int) -> str:
-    """Return `base_url` with `page=<n>` appended to the query string."""
-    parsed = urlparse(base_url)
-    query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    """Return `base_url` with `page=<n>` set in the query string."""
+    parsed = urllib.parse.urlparse(base_url)
+    query = dict(urllib.parse.parse_qsl(parsed.query, keep_blank_values=True))
     query["page"] = str(page)
-    return urlunparse(parsed._replace(query=urlencode(query)))
+    return urllib.parse.urlunparse(parsed._replace(query=urllib.parse.urlencode(query)))
+
+
+def _text(node: Tag | None) -> str:
+    return node.get_text(strip=True) if node else ""
+
+
+def parse_building(building: Tag) -> dict:
+    """Extract building-level (cassetteitem) fields shared by all its rooms."""
+    detail_cols = building.select_one(".cassetteitem_detail")
+    age_floors = detail_cols.select(".cassetteitem_detail-col3 div") if detail_cols else []
+    return {
+        "category": _text(building.select_one(".cassetteitem_content-label")),
+        "title": _text(building.select_one(".cassetteitem_content-title")),
+        "address": _text(building.select_one(".cassetteitem_detail-col1")),
+        "access": [
+            _text(t) for t in building.select(".cassetteitem_detail-col2 .cassetteitem_detail-text") if _text(t)
+        ],
+        "age": _text(age_floors[0]) if len(age_floors) > 0 else "",
+        "structure": _text(age_floors[1]) if len(age_floors) > 1 else "",
+    }
+
+
+def parse_room(row: Tag) -> dict:
+    """Extract room-level fields from a single tbody row."""
+    cells = row.find_all("td", recursive=False)
+    floor = _text(cells[2]) if len(cells) > 2 else ""
+    detail_link = row.select_one("a.js-cassette_link_href")
+    detail_href = detail_link.get("href", "") if detail_link else ""
+    listing_match = LISTING_ID_PATTERN.search(detail_href)
+    room_input = row.select_one("input.js-clipkey")
+    return {
+        "listing_id": listing_match.group(1) if listing_match else "",
+        "room_id": room_input.get("value", "") if room_input else "",
+        "floor": floor,
+        "rent": _text(row.select_one(".cassetteitem_price--rent")),
+        "admin_fee": _text(row.select_one(".cassetteitem_price--administration")),
+        "deposit": _text(row.select_one(".cassetteitem_price--deposit")),
+        "gratuity": _text(row.select_one(".cassetteitem_price--gratuity")),
+        "layout": _text(row.select_one(".cassetteitem_madori")),
+        "area": _text(row.select_one(".cassetteitem_menseki")),
+        "detail_url": urllib.parse.urljoin(DETAIL_URL_BASE, detail_href) if detail_href else "",
+    }
+
+
+def parse_page(html: str) -> list[dict]:
+    """Flatten all (building, room) pairs in `html` into one list of records."""
+    soup = BeautifulSoup(html, "html.parser")
+    records: list[dict] = []
+    for building in soup.select(".cassetteitem"):
+        building_fields = parse_building(building)
+        for row in building.select("tbody tr.js-cassette_link"):
+            records.append({**building_fields, **parse_room(row)})
+    return records
 
 
 @click.command()
@@ -39,31 +97,25 @@ def build_page_url(base_url: str, page: int) -> str:
 def main(url: str, pages: int) -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     headers = {"User-Agent": USER_AGENT, "Accept-Language": "ja,en;q=0.8"}
-    manifest: list[dict] = []
+    listings: list[dict] = []
 
     with httpx.Client(headers=headers, timeout=REQUEST_TIMEOUT_SECONDS, follow_redirects=True) as client:
         for page in range(1, pages + 1):
             page_url = build_page_url(url, page)
             print(f"[{page}/{pages}] GET {page_url}")
             response = client.get(page_url)
-            html_path = OUTPUT_DIR / f"page_{page:03d}.html"
-            html_path.write_text(response.text, encoding="utf-8")
-            manifest.append(
-                {
-                    "page": page,
-                    "url": page_url,
-                    "status": response.status_code,
-                    "bytes": len(response.content),
-                    "file": html_path.name,
-                }
-            )
-            print(f"  -> {response.status_code}, {len(response.content)} bytes -> {html_path}")
+            response.raise_for_status()
+            page_records = parse_page(response.text)
+            for record in page_records:
+                record["source_page"] = page
+            listings.extend(page_records)
+            print(f"  -> {response.status_code}, parsed {len(page_records)} rooms")
             if page < pages:
                 time.sleep(SLEEP_BETWEEN_REQUESTS_SECONDS)
 
-    manifest_path = OUTPUT_DIR / "manifest.json"
-    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"Wrote manifest to {manifest_path}")
+    output_path = OUTPUT_DIR / "listings.json"
+    output_path.write_text(json.dumps(listings, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"Wrote {len(listings)} listings to {output_path}")
 
 
 if __name__ == "__main__":
