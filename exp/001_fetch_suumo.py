@@ -13,17 +13,14 @@ import urllib.parse
 from pathlib import Path
 
 import click
-import httpx
 from bs4 import BeautifulSoup, Tag
+from curl_cffi import requests
+from proxy import dataimpulse_rotating_proxy_url
 
 DEFAULT_URL = "https://suumo.jp/jj/chintai/ichiran/FR301FC001/?ar=030&bs=040&ta=13"
 DETAIL_URL_BASE = "https://suumo.jp"
 LISTING_ID_PATTERN = re.compile(r"/chintai/(jnc_\d+)/")
-USER_AGENT = (
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/124.0.0.0 Safari/537.36"
-)
+IMPERSONATE_TARGET = "safari18_0"
 REQUEST_TIMEOUT_SECONDS = 30.0
 SLEEP_BETWEEN_REQUESTS_SECONDS = 2.0
 SCRIPT_PATH = Path(__file__).resolve()
@@ -96,22 +93,26 @@ def parse_page(html: str) -> list[dict]:
 @click.option("--pages", default=1, show_default=True, type=int, help="Number of pages to fetch.")
 def main(url: str, pages: int) -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    headers = {"User-Agent": USER_AGENT, "Accept-Language": "ja,en;q=0.8"}
     listings: list[dict] = []
 
-    with httpx.Client(headers=headers, timeout=REQUEST_TIMEOUT_SECONDS, follow_redirects=True) as client:
-        for page in range(1, pages + 1):
-            page_url = build_page_url(url, page)
-            print(f"[{page}/{pages}] GET {page_url}")
-            response = client.get(page_url)
-            response.raise_for_status()
-            page_records = parse_page(response.text)
-            for record in page_records:
-                record["source_page"] = page
-            listings.extend(page_records)
-            print(f"  -> {response.status_code}, parsed {len(page_records)} rooms")
-            if page < pages:
-                time.sleep(SLEEP_BETWEEN_REQUESTS_SECONDS)
+    for page in range(1, pages + 1):
+        page_url = build_page_url(url, page)
+        proxy_url = dataimpulse_rotating_proxy_url()
+        print(f"[{page}/{pages}] GET {page_url}")
+        with requests.Session(
+            impersonate=IMPERSONATE_TARGET,
+            timeout=REQUEST_TIMEOUT_SECONDS,
+            proxies={"http": proxy_url, "https": proxy_url},
+        ) as session:
+            response = session.get(page_url)
+        response.raise_for_status()
+        page_records = parse_page(response.text)
+        for record in page_records:
+            record["source_page"] = page
+        listings.extend(page_records)
+        print(f"  -> {response.status_code}, parsed {len(page_records)} rooms")
+        if page < pages:
+            time.sleep(SLEEP_BETWEEN_REQUESTS_SECONDS)
 
     output_path = OUTPUT_DIR / "listings.json"
     output_path.write_text(json.dumps(listings, ensure_ascii=False, indent=2), encoding="utf-8")
