@@ -11,3 +11,6 @@ wheels/
 
 # Environment variables
 .env
+
+# Exp script outputs
+data/
