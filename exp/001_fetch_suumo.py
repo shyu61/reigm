@@ -1,9 +1,10 @@
-"""Fetch SUUMO rental search result pages and save listings as JSON.
+"""Fetch SUUMO rental search result pages and stream listings as JSONL.
 
 Default target is a Tokyo rental listing search. Each building (cassetteitem)
-contains one or more rooms; the script flattens them into a single list of
-room records with building-level fields duplicated. Output is written to
-`data/001_fetch_suumo/listings.json`.
+contains one or more rooms; the script flattens them into a single record per
+room with building-level fields duplicated. Records are appended to
+`data/001_fetch_suumo/listings.jsonl` and flushed after each page, so an
+interrupted run (network drop, SIGINT) preserves everything fetched so far.
 """
 
 import json
@@ -89,36 +90,71 @@ def parse_page(html: str) -> list[dict]:
     return records
 
 
+def fetch_page(url: str) -> str:
+    """Fetch one URL through a fresh DataImpulse session (rotates exit IP)."""
+    proxy_url = dataimpulse_rotating_proxy_url()
+    with requests.Session(
+        impersonate=IMPERSONATE_TARGET,
+        timeout=REQUEST_TIMEOUT_SECONDS,
+        proxies={"http": proxy_url, "https": proxy_url},
+    ) as session:
+        response = session.get(url)
+    response.raise_for_status()
+    return response.text
+
+
+def latest_fetched_page(jsonl_path: Path) -> int:
+    """Return the largest `source_page` already in `jsonl_path`, or 0 if missing/empty."""
+    if not jsonl_path.exists():
+        return 0
+    latest = 0
+    with jsonl_path.open(encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            page = json.loads(line).get("source_page", 0)
+            if page > latest:
+                latest = page
+    return latest
+
+
 @click.command()
 @click.option("--url", default=DEFAULT_URL, show_default=True, help="SUUMO search URL.")
 @click.option("--pages", default=1, show_default=True, type=int, help="Number of pages to fetch.")
 def main(url: str, pages: int) -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    listings: list[dict] = []
+    output_path = OUTPUT_DIR / "listings.jsonl"
+    start_page = latest_fetched_page(output_path) + 1
+    last_page = start_page + pages - 1
+    total_records = 0
+    failed_pages: list[int] = []
+    print(f"Resuming from page {start_page} (writing to {output_path})")
 
-    for page in range(1, pages + 1):
-        page_url = build_page_url(url, page)
-        proxy_url = dataimpulse_rotating_proxy_url()
-        print(f"[{page}/{pages}] GET {page_url}")
-        with requests.Session(
-            impersonate=IMPERSONATE_TARGET,
-            timeout=REQUEST_TIMEOUT_SECONDS,
-            proxies={"http": proxy_url, "https": proxy_url},
-        ) as session:
-            response = session.get(page_url)
-        response.raise_for_status()
-        page_records = parse_page(response.text)
-        for record in page_records:
-            record["source_page"] = page
-        listings.extend(page_records)
-        print(f"  -> {response.status_code}, parsed {len(page_records)} rooms")
-        if page < pages:
-            delay = jitter_sleep(SLEEP_MIN_SECONDS, SLEEP_MAX_SECONDS)
-            print(f"  slept {delay:.2f}s")
+    with output_path.open("a", encoding="utf-8") as out:
+        for page in range(start_page, last_page + 1):
+            page_url = build_page_url(url, page)
+            print(f"[page {page}/{last_page}] GET {page_url}")
+            try:
+                html = fetch_page(page_url)
+            except Exception as exc:
+                print(f"  ! fetch failed: {exc!r}")
+                failed_pages.append(page)
+            else:
+                page_records = parse_page(html)
+                for record in page_records:
+                    record["source_page"] = page
+                    out.write(json.dumps(record, ensure_ascii=False) + "\n")
+                out.flush()
+                total_records += len(page_records)
+                print(f"  -> parsed {len(page_records)} rooms (total {total_records})")
+            if page < last_page:
+                delay = jitter_sleep(SLEEP_MIN_SECONDS, SLEEP_MAX_SECONDS)
+                print(f"  slept {delay:.2f}s")
 
-    output_path = OUTPUT_DIR / "listings.json"
-    output_path.write_text(json.dumps(listings, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"Wrote {len(listings)} listings to {output_path}")
+    print(f"Wrote {total_records} listings to {output_path}")
+    if failed_pages:
+        print(f"Failed pages ({len(failed_pages)}): {failed_pages}")
 
 
 if __name__ == "__main__":
