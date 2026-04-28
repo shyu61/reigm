@@ -14,3 +14,7 @@ wheels/
 
 # Exp script outputs
 data/
+
+# Logs
+log/
+*.log
