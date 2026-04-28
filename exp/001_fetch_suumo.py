@@ -8,7 +8,6 @@ room records with building-level fields duplicated. Output is written to
 
 import json
 import re
-import time
 import urllib.parse
 from pathlib import Path
 
@@ -16,13 +15,15 @@ import click
 from bs4 import BeautifulSoup, Tag
 from curl_cffi import requests
 from proxy import dataimpulse_rotating_proxy_url
+from utils import jitter_sleep
 
 DEFAULT_URL = "https://suumo.jp/jj/chintai/ichiran/FR301FC001/?ar=030&bs=040&ta=13"
 DETAIL_URL_BASE = "https://suumo.jp"
 LISTING_ID_PATTERN = re.compile(r"/chintai/(jnc_\d+)/")
 IMPERSONATE_TARGET = "safari18_0"
 REQUEST_TIMEOUT_SECONDS = 30.0
-SLEEP_BETWEEN_REQUESTS_SECONDS = 2.0
+SLEEP_MIN_SECONDS = 2.0
+SLEEP_MAX_SECONDS = 5.0
 SCRIPT_PATH = Path(__file__).resolve()
 OUTPUT_DIR = SCRIPT_PATH.parent.parent / "data" / SCRIPT_PATH.stem
 
@@ -112,7 +113,8 @@ def main(url: str, pages: int) -> None:
         listings.extend(page_records)
         print(f"  -> {response.status_code}, parsed {len(page_records)} rooms")
         if page < pages:
-            time.sleep(SLEEP_BETWEEN_REQUESTS_SECONDS)
+            delay = jitter_sleep(SLEEP_MIN_SECONDS, SLEEP_MAX_SECONDS)
+            print(f"  slept {delay:.2f}s")
 
     output_path = OUTPUT_DIR / "listings.json"
     output_path.write_text(json.dumps(listings, ensure_ascii=False, indent=2), encoding="utf-8")
