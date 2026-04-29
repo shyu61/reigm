@@ -9,5 +9,9 @@ class Settings(BaseSettings):
     dataimpulse_login: str = ""
     dataimpulse_password: str = ""
 
+    aws_profile_name: str = "default"
+    s3_region: str = "ap-northeast-1"
+    s3_bucket_name: str = "reigm-data"
+
 
 settings = Settings()
