@@ -4,15 +4,17 @@ Pipeline:
   1. Normalize titles (NFKC: 全角半角・記号・ローマ数字).
   2. Strip tails (place names from address dict).
   3. Extract katakana chunks and segment them via lexicon longest-match.
-  4. Aggregate sub-token counts (e.g. ヒルズ, メゾン, レジデンス).
+  4. Aggregate sub-token counts and split into two categories:
+     - 物件タイプ(形態語): building category words (ビル, マンション, コーポ…).
+     - 命名スタイル(装飾語): decorative naming words (メゾン, ヒルズ, レジデンス…).
 
-The lexicon (LEXICON) seeds known property-name affixes; chunks that don't
+The lexicon is split into TYPE_LEXICON and STYLE_LEXICON. Chunks that don't
 match anything stay as a single token (likely brand names). The CSV output
-flags each token as in/out of lexicon so the lexicon can be grown iteratively.
+tags each token with its category so the lexicons can be grown iteratively.
 
 Outputs:
-  - Console: top-N tokens.
-  - CSV: full token frequency distribution with in_lexicon flag.
+  - Console: 物件タイプ share (with %), top-N 命名スタイル, top-N unclassified.
+  - CSV: full token frequency distribution with category column.
   - CSV: sample of (raw → cleaned → segmented) for spot-checking.
 """
 
@@ -57,31 +59,46 @@ MIN_CHUNK_LEN = 2
 MIN_TOKEN_LEN = 2
 TOP_N = 50
 
-# Known property-name affixes. Add to this iteratively by reviewing the
-# `in_lexicon=""` rows of the output CSV — high-frequency unclassified tokens
-# are candidates for promotion to category words.
-LEXICON: tuple[str, ...] = (
-    # 接尾(住居系)
+# 物件タイプ(形態語) — concrete Japanese property-category words.
+# Used to compute building-type share (e.g. ビル/マンション/コーポ).
+TYPE_LEXICON: tuple[str, ...] = (
+    "マンション",
+    "アパート",
+    "アパートメント",
+    "ビル",
+    "ビルディング",
+    "コーポ",
+    "コープ",
+    "ハイム",
     "ハイツ",
     "ハウス",
+    "タワー",
+    "タワーズ",
+    "メゾネット",
+)
+
+# 命名スタイル(装飾語) — decorative naming words.
+# Add to this iteratively by reviewing the `category=""` rows of the output
+# CSV — high-frequency unclassified tokens are candidates for promotion.
+STYLE_LEXICON: tuple[str, ...] = (
+    # 住居系(装飾)
     "レジデンス",
-    "マンション",
-    "アパートメント",
     "ホームズ",
-    "コーポ",
     "メゾン",
     "カーサ",
     "カーザ",
     "シャトー",
     "パレス",
     "ヴィラ",
+    "ビラ",
     "ヴィレッジ",
     "ビレッジ",
     "フラット",
+    "フラッツ",
     "スイート",
     "アネックス",
     "ロフト",
-    # 接尾(地形・場所)
+    # 地形・場所
     "ヒルズ",
     "ヒル",
     "ガーデン",
@@ -91,8 +108,6 @@ LEXICON: tuple[str, ...] = (
     "コート",
     "プレイス",
     "スクエア",
-    "タワー",
-    "タワーズ",
     "ベイ",
     "リバー",
     "シティ",
@@ -102,12 +117,14 @@ LEXICON: tuple[str, ...] = (
     "フォート",
     "ポート",
     "ステージ",
-    # 接頭(装飾・形容)
+    "サイド",
+    # 装飾・形容
     "グランデ",
     "グラン",
     "プレミア",
     "プレミアム",
     "グレイス",
+    "グレース",
     "クレスト",
     "ロイヤル",
     "インペリアル",
@@ -127,8 +144,24 @@ LEXICON: tuple[str, ...] = (
     "エクセレント",
     "エスポワール",
     "レスポワール",
+    # 自然・色彩
+    "ハーモニー",
+    "スカイ",
+    "サン",
+    "サンライズ",
+    "サニー",
+    "グリーン",
+    "ホワイト",
+    "ブルー",
+    "ローズ",
+    "メイン",
+    "ブラン",
 )
-LEXICON_SET: frozenset[str] = frozenset(LEXICON)
+
+CATEGORY_TYPE = "type"
+CATEGORY_STYLE = "style"
+CATEGORY_OF: dict[str, str] = {t: CATEGORY_TYPE for t in TYPE_LEXICON} | {t: CATEGORY_STYLE for t in STYLE_LEXICON}
+LEXICON_SET: frozenset[str] = frozenset(CATEGORY_OF)
 LEXICON_SORTED: tuple[str, ...] = tuple(sorted(LEXICON_SET, key=len, reverse=True))
 SEPARATOR_CHARS = "・"
 
@@ -384,22 +417,31 @@ def main(force: bool) -> None:
     chunk_counter, chunk_to_tokens = step3_segment(cleaned)
     token_counter = step4_aggregate(chunk_counter, chunk_to_tokens)
 
-    print(f"\n--- top {TOP_N} sub-tokens ---")
-    for rank, (tok, count) in enumerate(token_counter.most_common(TOP_N), 1):
+    type_ranked = [(t, c) for t, c in token_counter.most_common() if CATEGORY_OF.get(t) == CATEGORY_TYPE]
+    style_ranked = [(t, c) for t, c in token_counter.most_common() if CATEGORY_OF.get(t) == CATEGORY_STYLE]
+    unclassified = [(t, c) for t, c in token_counter.most_common() if t not in CATEGORY_OF]
+
+    type_total = sum(c for _, c in type_ranked)
+    print(f"\n--- 物件タイプ(形態語)シェア — total {type_total:,} occurrences ---")
+    for rank, (tok, count) in enumerate(type_ranked, 1):
+        share = count / type_total * 100 if type_total else 0
+        print(f"  {rank:>2}. {count:>6,}  {share:>5.1f}%  {tok}")
+
+    print(f"\n--- 命名スタイル(装飾語) top {TOP_N} ---")
+    for rank, (tok, count) in enumerate(style_ranked[:TOP_N], 1):
+        print(f"  {rank:>2}. {count:>6,}  {tok}")
+
+    print(f"\n--- top {TOP_N} unclassified tokens (lexicon candidates) ---")
+    for rank, (tok, count) in enumerate(unclassified[:TOP_N], 1):
         print(f"  {rank:>2}. {count:>6,}  {tok}")
 
     csv_path = OUTPUT_DIR / "token_counts.csv"
     with csv_path.open("w", encoding="utf-8", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["token", "count", "in_lexicon"])
+        w.writerow(["token", "count", "category"])
         for tok, count in token_counter.most_common():
-            w.writerow([tok, count, "Y" if tok in LEXICON_SET else ""])
+            w.writerow([tok, count, CATEGORY_OF.get(tok, "")])
     print(f"\nwrote: {csv_path}")
-
-    unclassified = [(t, c) for t, c in token_counter.most_common() if t not in LEXICON_SET]
-    print(f"\n--- top {TOP_N} unclassified tokens (lexicon candidates) ---")
-    for rank, (tok, count) in enumerate(unclassified[:TOP_N], 1):
-        print(f"  {rank:>2}. {count:>6,}  {tok}")
 
     sample_path = OUTPUT_DIR / "segmentation_sample.csv"
     with sample_path.open("w", encoding="utf-8", newline="") as f:
