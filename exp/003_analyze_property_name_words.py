@@ -3,13 +3,17 @@
 Pipeline:
   1. Normalize titles (NFKC: 全角半角・記号・ローマ数字).
   2. Strip tails (place names from address dict).
-  3. Extract katakana chunks and segment them with a learned BPE.
+  3. Extract katakana chunks and segment them via lexicon longest-match.
   4. Aggregate sub-token counts (e.g. ヒルズ, メゾン, レジデンス).
+
+The lexicon (LEXICON) seeds known property-name affixes; chunks that don't
+match anything stay as a single token (likely brand names). The CSV output
+flags each token as in/out of lexicon so the lexicon can be grown iteratively.
 
 Outputs:
   - Console: top-N tokens.
-  - CSV: full token frequency distribution.
-  - TXT: sample of (raw → cleaned → segmented) for spot-checking.
+  - CSV: full token frequency distribution with in_lexicon flag.
+  - CSV: sample of (raw → cleaned → segmented) for spot-checking.
 """
 
 import csv
@@ -51,8 +55,82 @@ TAIL_SEP_CHARS = " 　・"
 TRAILING_DIGITS_RE = re.compile(r"^(.*?)\d+$")
 MIN_CHUNK_LEN = 2
 MIN_TOKEN_LEN = 2
-BPE_NUM_MERGES = 400
 TOP_N = 50
+
+# Known property-name affixes. Add to this iteratively by reviewing the
+# `in_lexicon=""` rows of the output CSV — high-frequency unclassified tokens
+# are candidates for promotion to category words.
+LEXICON: tuple[str, ...] = (
+    # 接尾(住居系)
+    "ハイツ",
+    "ハウス",
+    "レジデンス",
+    "マンション",
+    "アパートメント",
+    "ホームズ",
+    "コーポ",
+    "メゾン",
+    "カーサ",
+    "カーザ",
+    "シャトー",
+    "パレス",
+    "ヴィラ",
+    "ヴィレッジ",
+    "ビレッジ",
+    "フラット",
+    "スイート",
+    "アネックス",
+    "ロフト",
+    # 接尾(地形・場所)
+    "ヒルズ",
+    "ヒル",
+    "ガーデン",
+    "パーク",
+    "フォレスト",
+    "テラス",
+    "コート",
+    "プレイス",
+    "スクエア",
+    "タワー",
+    "タワーズ",
+    "ベイ",
+    "リバー",
+    "シティ",
+    "タウン",
+    "プラザ",
+    "フォルト",
+    "フォート",
+    "ポート",
+    "ステージ",
+    # 接頭(装飾・形容)
+    "グランデ",
+    "グラン",
+    "プレミア",
+    "プレミアム",
+    "グレイス",
+    "クレスト",
+    "ロイヤル",
+    "インペリアル",
+    "ノーブル",
+    "クラシック",
+    "モダン",
+    "ヌーヴォ",
+    "ベラ",
+    "ベル",
+    "ビアン",
+    "ボン",
+    "ファースト",
+    "プライム",
+    "ウイング",
+    "アーバン",
+    "アーク",
+    "エクセレント",
+    "エスポワール",
+    "レスポワール",
+)
+LEXICON_SET: frozenset[str] = frozenset(LEXICON)
+LEXICON_SORTED: tuple[str, ...] = tuple(sorted(LEXICON_SET, key=len, reverse=True))
+SEPARATOR_CHARS = "・"
 
 
 def _cache_load(path: Path):
@@ -193,7 +271,7 @@ def step2_strip_tails(
     return out
 
 
-# --- Step 3: Extract katakana chunks + BPE segmentation ---
+# --- Step 3: Extract katakana chunks + lexicon segmentation ---
 
 
 def _extract_katakana_chunks(cleaned: list[tuple[str, str]]) -> Counter:
@@ -205,58 +283,44 @@ def _extract_katakana_chunks(cleaned: list[tuple[str, str]]) -> Counter:
     return counter
 
 
-def _bpe_pair_counts(splits: list[list[str]], weights: list[int]) -> Counter:
-    counter: Counter = Counter()
-    for split, w in zip(splits, weights, strict=True):
-        for a, b in zip(split, split[1:], strict=False):
-            counter[(a, b)] += w
-    return counter
+def _lexicon_split(token: str) -> list[str]:
+    """Longest-match scan: emit lexicon words; collect non-lexicon runs as single pieces.
 
-
-def _bpe_merge_pair(splits: list[list[str]], pair: tuple[str, str]) -> list[list[str]]:
-    a, b = pair
-    merged = a + b
-    out: list[list[str]] = []
-    for split in splits:
-        new: list[str] = []
-        i = 0
-        n = len(split)
-        while i < n:
-            if i + 1 < n and split[i] == a and split[i + 1] == b:
-                new.append(merged)
-                i += 2
-            else:
-                new.append(split[i])
-                i += 1
-        out.append(new)
-    return out
-
-
-def _train_bpe(chunks: dict[str, int], num_merges: int) -> tuple[list[tuple[str, str]], dict[str, list[str]]]:
-    keys = list(chunks.keys())
-    weights = [chunks[k] for k in keys]
-    splits = [list(k) for k in keys]
-    merges: list[tuple[str, str]] = []
-    for step in range(num_merges):
-        pair_counts = _bpe_pair_counts(splits, weights)
-        if not pair_counts:
-            break
-        best_pair, best_count = pair_counts.most_common(1)[0]
-        if best_count < 2:
-            break
-        merges.append(best_pair)
-        splits = _bpe_merge_pair(splits, best_pair)
-        if (step + 1) % 50 == 0:
-            print(f"  merge {step + 1}: {best_pair} (count={best_count:,})")
-    chunk_to_tokens = dict(zip(keys, splits, strict=True))
-    return merges, chunk_to_tokens
+    Treats SEPARATOR_CHARS (e.g. 中黒) as boundaries. Pieces that don't match the
+    lexicon stay intact rather than being split further — splitting a brand name
+    like アウル into ア+ウ+ル loses information, so we'd rather under-segment.
+    """
+    result: list[str] = []
+    i = 0
+    n = len(token)
+    while i < n:
+        if token[i] in SEPARATOR_CHARS:
+            i += 1
+            continue
+        matched: str | None = None
+        for word in LEXICON_SORTED:
+            if token.startswith(word, i):
+                matched = word
+                break
+        if matched is not None:
+            result.append(matched)
+            i += len(matched)
+            continue
+        j = i + 1
+        while j < n and token[j] not in SEPARATOR_CHARS:
+            if any(token.startswith(w, j) for w in LEXICON_SORTED):
+                break
+            j += 1
+        result.append(token[i:j])
+        i = j
+    return result
 
 
 def step3_segment(
     cleaned: list[tuple[str, str]],
 ) -> tuple[Counter, dict[str, list[str]]]:
-    """Extract katakana chunks and segment them with a learned BPE."""
-    cache = CACHE_DIR / "step3_segmented.json"
+    """Extract katakana chunks and segment them via lexicon longest-match."""
+    cache = CACHE_DIR / "step3_lexicon.json"
     if (cached := _cache_load(cache)) is not None:
         chunk_counter: Counter = Counter(cached["chunk_counter"])
         chunk_to_tokens: dict[str, list[str]] = cached["chunk_to_tokens"]
@@ -264,9 +328,8 @@ def step3_segment(
         return chunk_counter, chunk_to_tokens
     chunk_counter = _extract_katakana_chunks(cleaned)
     print(f"step3: {len(chunk_counter):,} unique chunks, {sum(chunk_counter.values()):,} occurrences")
-    print(f"training BPE (up to {BPE_NUM_MERGES} merges)...")
-    merges, chunk_to_tokens = _train_bpe(dict(chunk_counter), BPE_NUM_MERGES)
-    print(f"learned {len(merges)} merges")
+    print(f"segmenting via lexicon ({len(LEXICON_SET)} entries)...")
+    chunk_to_tokens = {chunk: _lexicon_split(chunk) for chunk in chunk_counter}
     _cache_save(cache, {"chunk_counter": dict(chunk_counter), "chunk_to_tokens": chunk_to_tokens})
     return chunk_counter, chunk_to_tokens
 
@@ -275,8 +338,8 @@ def step3_segment(
 
 
 def step4_aggregate(chunk_counter: Counter, chunk_to_tokens: dict[str, list[str]]) -> Counter:
-    """Aggregate sub-token counts from BPE-segmented chunks."""
-    cache = CACHE_DIR / "step4_tokens.json"
+    """Aggregate sub-token counts from segmented chunks."""
+    cache = CACHE_DIR / "step4_lexicon_tokens.json"
     if (cached := _cache_load(cache)) is not None:
         token_counter: Counter = Counter(cached)
         print(f"step4: loaded {len(token_counter):,} tokens from cache")
@@ -328,10 +391,15 @@ def main(force: bool) -> None:
     csv_path = OUTPUT_DIR / "token_counts.csv"
     with csv_path.open("w", encoding="utf-8", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["token", "count"])
+        w.writerow(["token", "count", "in_lexicon"])
         for tok, count in token_counter.most_common():
-            w.writerow([tok, count])
+            w.writerow([tok, count, "Y" if tok in LEXICON_SET else ""])
     print(f"\nwrote: {csv_path}")
+
+    unclassified = [(t, c) for t, c in token_counter.most_common() if t not in LEXICON_SET]
+    print(f"\n--- top {TOP_N} unclassified tokens (lexicon candidates) ---")
+    for rank, (tok, count) in enumerate(unclassified[:TOP_N], 1):
+        print(f"  {rank:>2}. {count:>6,}  {tok}")
 
     sample_path = OUTPUT_DIR / "segmentation_sample.csv"
     with sample_path.open("w", encoding="utf-8", newline="") as f:
