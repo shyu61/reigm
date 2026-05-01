@@ -2,7 +2,7 @@
 
 Downloads the N02 (railway) GML/GeoJSON archive from MLIT, filters station
 features whose representative point falls within the 23-ku bounding box, and
-writes deduped station names to `data/input/station_data/tokyo_23ku_stations.txt`
+writes deduped station names to `data/004_fetch_station_data/tokyo_23ku_stations.txt`
 (one per line). The output is consumed by 003_analyze_property_name_words.py.
 """
 
@@ -23,8 +23,7 @@ LAT_MIN, LAT_MAX = 35.50, 35.82
 LNG_MIN, LNG_MAX = 139.55, 139.95
 
 SCRIPT_PATH = Path(__file__).resolve()
-DATA_DIR = SCRIPT_PATH.parent.parent / "data"
-OUTPUT_DIR = DATA_DIR / "input" / "station_data"
+OUTPUT_DIR = SCRIPT_PATH.parent.parent / "data" / SCRIPT_PATH.stem
 OUTPUT_PATH = OUTPUT_DIR / "tokyo_23ku_stations.txt"
 
 

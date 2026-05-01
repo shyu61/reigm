@@ -30,7 +30,7 @@ SCRIPT_PATH = Path(__file__).resolve()
 DATA_DIR = SCRIPT_PATH.parent.parent / "data"
 LISTINGS_PATH = DATA_DIR / "001_fetch_suumo" / "listings.jsonl"
 ADDRESS_DIR = DATA_DIR / "input" / "address_data"
-STATIONS_PATH = DATA_DIR / "input" / "station_data" / "tokyo_23ku_stations.txt"
+STATIONS_PATH = DATA_DIR / "004_fetch_station_data" / "tokyo_23ku_stations.txt"
 OUTPUT_DIR = DATA_DIR / SCRIPT_PATH.stem
 CACHE_DIR = OUTPUT_DIR / "cache"
 
