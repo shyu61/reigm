@@ -4,13 +4,16 @@ Pipeline:
   1. Normalize titles (NFKC: 全角半角・記号・ローマ数字).
   2. Strip tails (place names from address dict).
   3. Extract katakana chunks and segment them via lexicon longest-match.
-  4. Aggregate sub-token counts and split into two categories:
+  4. Aggregate sub-token counts (merging spelling variants via ALIASES) and
+     split into two categories:
      - 物件タイプ(形態語): building category words (ビル, マンション, コーポ…).
      - 命名スタイル(装飾語): decorative naming words (メゾン, ヒルズ, レジデンス…).
 
 The lexicon is split into TYPE_LEXICON and STYLE_LEXICON. Chunks that don't
-match anything stay as a single token (likely brand names). The CSV output
-tags each token with its category so the lexicons can be grown iteratively.
+match anything stay as a single token (likely brand names). ALIASES merges
+spelling variants (e.g. グレース → グレイス, ビラ → ヴィラ) into a canonical form.
+The CSV output tags each token with its category so the lexicons can be grown
+iteratively.
 
 Outputs:
   - Console: 物件タイプ share (with %), top-N 命名スタイル, top-N unclassified.
@@ -164,6 +167,16 @@ CATEGORY_OF: dict[str, str] = {t: CATEGORY_TYPE for t in TYPE_LEXICON} | {t: CAT
 LEXICON_SET: frozenset[str] = frozenset(CATEGORY_OF)
 LEXICON_SORTED: tuple[str, ...] = tuple(sorted(LEXICON_SET, key=len, reverse=True))
 SEPARATOR_CHARS = "・"
+
+# Surface-form aliases — variant spelling → canonical form. Counts for variants
+# are merged into the canonical token during step4 aggregation. Both sides must
+# remain in the lexicon so the segmenter recognizes either surface form.
+ALIASES: dict[str, str] = {
+    "グレース": "グレイス",
+    "ビラ": "ヴィラ",
+    "ビレッジ": "ヴィレッジ",
+    "カーザ": "カーサ",
+}
 
 
 def _cache_load(path: Path):
@@ -381,7 +394,7 @@ def step4_aggregate(chunk_counter: Counter, chunk_to_tokens: dict[str, list[str]
     for chunk, count in chunk_counter.items():
         for tok in chunk_to_tokens[chunk]:
             if len(tok) >= MIN_TOKEN_LEN:
-                token_counter[tok] += count
+                token_counter[ALIASES.get(tok, tok)] += count
     print(f"step4: {len(token_counter):,} unique tokens (len>={MIN_TOKEN_LEN})")
     _cache_save(cache, dict(token_counter))
     return token_counter
