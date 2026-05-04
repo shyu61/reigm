@@ -18,3 +18,5 @@ data/
 # Logs
 log/
 *.log
+
+exp/notebook.ipynb
