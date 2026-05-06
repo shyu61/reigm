@@ -1,11 +1,15 @@
-"""Render an HTML infographic of property-name token frequencies.
+"""Render an SNS-ready infographic of property-name token frequencies.
 
-Reads `token_counts.csv` produced by 003 and emits a single self-contained
-HTML file styled for editorial / infographic-media use. Two-panel layout
-contrasts:
+Reads `token_counts.csv` produced by 003 and emits a portrait HTML canvas
+(1080×1350, Instagram 4:5) styled as a quiet editorial archive — warm paper,
+mincho display type, hairline ledger rules, italic Garamond index figures.
+Two stacked panels contrast 形態語 (functional building-category words)
+against 装飾語 (decorative naming words).
 
-  - 物件タイプ (形態語): functional building-category words.
-  - 命名スタイル (装飾語): decorative naming words.
+Capture for SNS:
+  chromium --headless --window-size=1080,1350 --screenshot=out.png \\
+      --hide-scrollbars --default-background-color=00000000 \\
+      file://$(pwd)/data/005_visualize_property_name_words/property_name_words.html
 """
 
 from html import escape
@@ -22,117 +26,211 @@ TYPE_TOP_N = 13
 STYLE_TOP_N = 15
 
 CSS = """
+@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,400;1,500&family=Inter:wght@400;500;600;700&family=Noto+Serif+JP:wght@400;500;600;700&display=swap');
+
 :root {
-    --bg: #FBF6EE;
-    --ink: #1D1D1B;
-    --subink: #6A655E;
-    --muted: #9C958A;
-    --rule: #E2D9CB;
-    --type: #264653;
-    --style: #E07856;
+    --paper: #F0E8D5;
+    --ink: #1B1E26;
+    --subink: #5A5547;
+    --muted: #ACA391;
+    --hairline: #D6CBB3;
+    --rule: #C8BC9E;
+    --type: #344B5C;
+    --style: #B05A3C;
 }
-* { box-sizing: border-box; }
-html, body { margin: 0; padding: 0; }
-body {
-    background: var(--bg);
-    color: var(--ink);
-    font-family: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Helvetica Neue",
-                 "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
-    font-feature-settings: "palt" 1;
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+    background: #2A2722;
+    font-family: "Inter", "Hiragino Sans", "Helvetica Neue", sans-serif;
+    font-feature-settings: "palt" 1, "tnum" 1;
     -webkit-font-smoothing: antialiased;
-    font-size: 14px;
-    line-height: 1.55;
+    color: var(--ink);
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
 }
-.page {
-    max-width: 1240px;
-    margin: 0 auto;
-    padding: 56px 64px 40px;
+
+.canvas {
+    width: 1080px;
+    height: 1350px;
+    background: var(--paper);
+    position: relative;
+    padding: 60px 72px 52px;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 30px 80px -30px rgba(0, 0, 0, 0.5);
+    background-image:
+        radial-gradient(ellipse at top left, rgba(255, 255, 255, 0.45) 0%, transparent 60%),
+        radial-gradient(ellipse at bottom right, rgba(0, 0, 0, 0.03) 0%, transparent 55%);
 }
-.eyebrow {
-    font-size: 10.5px;
-    letter-spacing: 0.32em;
-    color: var(--style);
-    font-weight: 700;
+
+.col-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    font-size: 9.5px;
+    letter-spacing: 0.36em;
     text-transform: uppercase;
+    color: var(--subink);
+    font-weight: 600;
+    margin-bottom: 24px;
+}
+.col-top .mark {
+    font-family: "Cormorant Garamond", serif;
+    font-style: italic;
+    font-weight: 500;
+    font-size: 13px;
+    letter-spacing: 0.05em;
+    text-transform: none;
+    color: var(--style);
+}
+
+.title {
+    font-family: "Noto Serif JP", "Hiragino Mincho ProN", serif;
+    font-weight: 600;
+    font-size: 44px;
+    line-height: 1.08;
+    letter-spacing: -0.005em;
     margin-bottom: 12px;
 }
-h1.title {
-    margin: 0 0 10px;
-    font-size: 34px;
-    font-weight: 800;
-    letter-spacing: -0.01em;
+.title .em {
+    color: var(--style);
 }
+
 .lede {
-    margin: 0;
+    font-family: "Noto Serif JP", "Hiragino Mincho ProN", serif;
+    font-weight: 400;
+    font-size: 12.5px;
+    line-height: 1.7;
     color: var(--subink);
-    font-size: 13.5px;
-    max-width: 760px;
+    max-width: 720px;
+    margin-bottom: 22px;
 }
+
 .kpis {
     display: grid;
     grid-template-columns: repeat(4, 1fr);
-    gap: 32px;
-    margin-top: 32px;
-    padding: 22px 0 22px;
-    border-top: 1px solid var(--rule);
-    border-bottom: 1px solid var(--rule);
+    column-gap: 24px;
+    padding: 14px 0 12px;
+    border-top: 1px solid var(--hairline);
+    border-bottom: 1px solid var(--hairline);
 }
+.kpi { display: flex; flex-direction: column; }
 .kpi-value {
-    font-size: 28px;
-    font-weight: 800;
-    line-height: 1.1;
-    letter-spacing: -0.01em;
+    font-family: "Cormorant Garamond", "Georgia", serif;
+    font-weight: 500;
+    font-size: 30px;
+    line-height: 1;
+    letter-spacing: -0.005em;
+    font-feature-settings: "tnum" 1, "lnum" 1;
+}
+.kpi-value .pct {
+    font-size: 18px;
+    font-style: italic;
+    color: var(--subink);
+    margin-left: 1px;
 }
 .kpi-label {
-    font-size: 11px;
+    font-family: "Noto Serif JP", "Hiragino Mincho ProN", serif;
+    font-size: 10.5px;
     color: var(--subink);
-    margin-top: 6px;
+    margin-top: 8px;
     letter-spacing: 0.04em;
 }
+
 .panels {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 64px;
-    margin-top: 36px;
+    display: flex;
+    flex-direction: column;
+    gap: 22px;
+    margin-top: 22px;
+    flex: 1;
 }
+
+.panel { display: flex; flex-direction: column; }
+
+.panel-head {
+    display: grid;
+    grid-template-columns: 48px 1fr;
+    column-gap: 14px;
+    align-items: baseline;
+    margin-bottom: 10px;
+}
+.panel-num {
+    font-family: "Cormorant Garamond", serif;
+    font-style: italic;
+    font-weight: 500;
+    font-size: 30px;
+    line-height: 1;
+    letter-spacing: -0.01em;
+}
+.panel-num.type { color: var(--type); }
+.panel-num.style { color: var(--style); }
+
+.panel-titles { display: flex; flex-direction: column; }
 .panel-eyebrow {
-    font-size: 10.5px;
-    letter-spacing: 0.18em;
-    font-weight: 700;
+    font-size: 9.5px;
+    letter-spacing: 0.32em;
     text-transform: uppercase;
+    font-weight: 700;
+    margin-bottom: 4px;
 }
 .panel-eyebrow.type { color: var(--type); }
 .panel-eyebrow.style { color: var(--style); }
-h2.panel-title {
-    margin: 6px 0 4px;
-    font-size: 21px;
-    font-weight: 800;
-    letter-spacing: -0.005em;
+.panel-title {
+    font-family: "Noto Serif JP", "Hiragino Mincho ProN", serif;
+    font-weight: 600;
+    font-size: 17px;
+    line-height: 1.25;
 }
 .panel-blurb {
-    margin: 0 0 22px;
+    font-family: "Noto Serif JP", "Hiragino Mincho ProN", serif;
+    font-size: 10.5px;
     color: var(--subink);
-    font-size: 12px;
+    margin-top: 2px;
 }
-.rows { display: flex; flex-direction: column; gap: 4px; }
+
+.rows { display: flex; flex-direction: column; }
 .row {
     display: grid;
-    grid-template-columns: 96px 1fr 60px;
+    grid-template-columns: 44px 130px 1fr 70px;
     align-items: center;
-    column-gap: 14px;
-    padding: 5px 0;
+    column-gap: 16px;
+    height: 24px;
+    border-top: 1px solid var(--hairline);
 }
+.row:last-child { border-bottom: 1px solid var(--hairline); }
+
+.idx {
+    font-family: "Cormorant Garamond", serif;
+    font-style: italic;
+    font-weight: 500;
+    font-size: 12px;
+    line-height: 1;
+    color: var(--muted);
+    font-feature-settings: "tnum" 1, "lnum" 1;
+    letter-spacing: 0.02em;
+}
+
 .token {
-    font-size: 13px;
+    font-family: "Noto Serif JP", "Hiragino Mincho ProN", serif;
+    font-weight: 500;
+    font-size: 13.5px;
+    line-height: 1;
     text-align: right;
     color: var(--ink);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    letter-spacing: 0.01em;
 }
+
 .bar-track {
     position: relative;
-    height: 18px;
+    height: 12px;
     display: flex;
     align-items: center;
 }
@@ -141,65 +239,100 @@ h2.panel-title {
     position: absolute;
     left: 0;
     right: 0;
-    top: 50%;
+    top: 50%%;
     height: 1px;
     background: var(--rule);
 }
 .bar {
     position: relative;
-    height: 100%;
-    border-radius: 1px;
+    height: 4px;
+    min-width: 2px;
+    border-radius: 0;
 }
 .bar.type { background: var(--type); }
 .bar.style { background: var(--style); }
+.bar::after {
+    content: "";
+    position: absolute;
+    right: -1px;
+    top: -3px;
+    width: 1px;
+    height: 10px;
+    background: currentColor;
+    opacity: 0;
+}
+
 .count {
-    font-size: 12px;
-    font-weight: 700;
-    font-variant-numeric: tabular-nums;
-    text-align: left;
+    font-family: "Cormorant Garamond", serif;
+    font-weight: 500;
+    font-size: 15px;
+    line-height: 1;
+    text-align: right;
+    font-feature-settings: "tnum" 1, "lnum" 1;
+    letter-spacing: 0.01em;
 }
 .count.type { color: var(--type); }
 .count.style { color: var(--style); }
-footer {
+
+.colophon-bottom {
     display: flex;
     justify-content: space-between;
     align-items: baseline;
-    margin-top: 40px;
-    padding-top: 18px;
-    border-top: 1px solid var(--rule);
+    margin-top: 18px;
+    padding-top: 12px;
+    border-top: 1px solid var(--hairline);
+    font-size: 9px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
     color: var(--muted);
+}
+.colophon-bottom .seal {
+    font-family: "Cormorant Garamond", serif;
+    font-style: italic;
+    font-weight: 500;
     font-size: 11px;
-    font-family: "SF Mono", "Menlo", monospace;
+    letter-spacing: 0.04em;
+    text-transform: none;
+    color: var(--subink);
 }
 """
 
 
-def _row(token: str, count: int, max_count: int, kind: str) -> str:
+def _row(idx: int, token: str, count: int, max_count: int, kind: str) -> str:
     pct = count / max_count * 100
     return (
         '<div class="row">'
+        f'<span class="idx">№ {idx:03d}</span>'
         f'<span class="token">{escape(token)}</span>'
-        f'<span class="bar-track"><span class="bar {kind}" style="width: {pct:.2f}%"></span></span>'
+        '<span class="bar-track">'
+        f'<span class="bar {kind}" style="width: {pct:.2f}%"></span>'
+        "</span>"
         f'<span class="count {kind}">{count:,}</span>'
         "</div>"
     )
 
 
-def _panel(eyebrow: str, title: str, blurb: str, rows_html: str, kind: str) -> str:
+def _panel(numeral: str, eyebrow: str, title: str, blurb: str, rows_html: str, kind: str) -> str:
     return (
         '<section class="panel">'
+        '<div class="panel-head">'
+        f'<div class="panel-num {kind}">{escape(numeral)}</div>'
+        '<div class="panel-titles">'
         f'<div class="panel-eyebrow {kind}">{escape(eyebrow)}</div>'
         f'<h2 class="panel-title">{escape(title)}</h2>'
         f'<p class="panel-blurb">{escape(blurb)}</p>'
+        "</div>"
+        "</div>"
         f'<div class="rows">{rows_html}</div>'
         "</section>"
     )
 
 
-def _kpi(value: str, label: str) -> str:
+def _kpi(value: str, suffix: str, label: str) -> str:
+    suffix_html = f'<span class="pct">{escape(suffix)}</span>' if suffix else ""
     return (
         '<div class="kpi">'
-        f'<div class="kpi-value">{escape(value)}</div>'
+        f'<div class="kpi-value">{escape(value)}{suffix_html}</div>'
         f'<div class="kpi-label">{escape(label)}</div>'
         "</div>"
     )
@@ -219,28 +352,34 @@ def main() -> None:
 
     bar_max = max(int(type_df["count"].max()), int(style_df["count"].max()))
 
-    type_rows = "".join(_row(t, c, bar_max, "type") for t, c in zip(type_df["token"], type_df["count"], strict=True))
+    type_rows = "".join(
+        _row(i + 1, t, c, bar_max, "type")
+        for i, (t, c) in enumerate(zip(type_df["token"], type_df["count"], strict=True))
+    )
     style_rows = "".join(
-        _row(t, c, bar_max, "style") for t, c in zip(style_df["token"], style_df["count"], strict=True)
+        _row(i + 1, t, c, bar_max, "style")
+        for i, (t, c) in enumerate(zip(style_df["token"], style_df["count"], strict=True))
     )
 
     kpis_html = "".join(
         [
-            _kpi(f"{total:,}", "分析対象トークン (述べ)"),
-            _kpi(f"{type_total / total * 100:.1f}%", "形態語 シェア"),
-            _kpi(f"{style_total / total * 100:.1f}%", "装飾語 シェア"),
-            _kpi(f"{other_total / total * 100:.1f}%", "ブランド・その他"),
+            _kpi(f"{total:,}", "", "述べトークン総数"),
+            _kpi(f"{type_total / total * 100:.1f}", "%", "形態語 シェア"),
+            _kpi(f"{style_total / total * 100:.1f}", "%", "装飾語 シェア"),
+            _kpi(f"{other_total / total * 100:.1f}", "%", "ブランド・その他"),
         ]
     )
 
     panels_html = _panel(
-        "Category 01 — 形態語",
+        "I.",
+        "Category 01 · 形態語 / Functional",
         "物件タイプを示す語",
         f"建物そのものを示す機能語({TYPE_TOP_N}語すべて)",
         type_rows,
         "type",
     ) + _panel(
-        "Category 02 — 装飾語",
+        "II.",
+        "Category 02 · 装飾語 / Decorative",
         "命名スタイルを彩る語",
         f"印象や立地ニュアンスを添える語(top {STYLE_TOP_N})",
         style_rows,
@@ -255,17 +394,21 @@ def main() -> None:
 <style>{CSS}</style>
 </head>
 <body>
-<main class="page">
-<div class="eyebrow">Tokyo Property-Name Lexicon</div>
-<h1 class="title">東京の物件名をつくる言葉</h1>
-<p class="lede">SUUMO 掲載タイトルから抽出したカタカナ語を「形態語」と「装飾語」に分類し、出現回数で並べた。</p>
-<div class="kpis">{kpis_html}</div>
-<div class="panels">{panels_html}</div>
-<footer>
-<span>Source: SUUMO 掲載物件タイトル · Lexicon-based longest-match segmentation</span>
-<span>exp/003_analyze_property_name_words.py</span>
-</footer>
-</main>
+<article class="canvas">
+  <div class="col-top">
+    <span>Tokyo Property-Name Lexicon · Vol. 001</span>
+    <span class="mark">№ 005 — 2026</span>
+  </div>
+  <h1 class="title">東京の物件名を<br>つくる<span class="em">言葉</span>。</h1>
+  <p class="lede">SUUMO 掲載タイトルから抽出したカタカナ語を、建物そのものを指す「形態語」と、
+  印象を彩る「装飾語」に分けて出現回数順に並べた、静かな索引。</p>
+  <div class="kpis">{kpis_html}</div>
+  <div class="panels">{panels_html}</div>
+  <div class="colophon-bottom">
+    <span>Source · SUUMO 物件タイトル / Lexicon-based longest-match segmentation</span>
+    <span class="seal">reigm — exp / 003 · 005</span>
+  </div>
+</article>
 </body>
 </html>
 """
