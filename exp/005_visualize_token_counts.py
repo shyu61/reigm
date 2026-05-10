@@ -1,23 +1,29 @@
-"""Render the top-20 property-name tokens as a D3-powered HTML bar chart."""
+"""Render the top-N property-name tokens as a D3-powered HTML bar chart.
+Design reference: https://pudding.cool/2019/03/pop-music/
+"""
 
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
+import click
 import polars as pl
 
 SCRIPT_PATH = Path(__file__).resolve()
 PROJECT_ROOT = SCRIPT_PATH.parent.parent
-INPUT_CSV = PROJECT_ROOT / "data" / "003_analyze_property_name_words" / "token_counts_top20.csv"
+INPUT_CSV = PROJECT_ROOT / "data" / "003_analyze_property_name_words" / "token_counts.csv"
 OUTPUT_DIR = PROJECT_ROOT / "data" / SCRIPT_PATH.stem
 OUTPUT_HTML = OUTPUT_DIR / "index.html"
+
+DEFAULT_TOP_N = 20
 
 HTML_TEMPLATE = """<!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <title>Top 20 property-name tokens</title>
+    <title>Top __TOP_N__ property-name tokens</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -125,7 +131,7 @@ HTML_TEMPLATE = """<!doctype html>
   </head>
   <body>
     <div class="page">
-      <h1 class="title">Top 20 property-name tokens</h1>
+      <h1 class="title">Top __TOP_N__ property-name tokens</h1>
       <p class="subtitle">
         Most frequent katakana tokens parsed from real-estate listing names. Bar
         length is proportional to occurrence count across the sampled listings.
@@ -208,14 +214,25 @@ HTML_TEMPLATE = """<!doctype html>
 """
 
 
-def main() -> None:
-    df = pl.read_csv(INPUT_CSV).sort("count", descending=True)
+@click.command()
+@click.option(
+    "-n",
+    "--top-n",
+    type=click.IntRange(min=1),
+    default=DEFAULT_TOP_N,
+    show_default=True,
+    help="Number of top tokens to render.",
+)
+def main(top_n: int) -> None:
+    df = pl.read_csv(INPUT_CSV).sort("count", descending=True).head(top_n)
     data_json = json.dumps(df.to_dicts(), ensure_ascii=False)
-    html = HTML_TEMPLATE.replace("__DATA_JSON__", data_json)
+    html = HTML_TEMPLATE.replace("__DATA_JSON__", data_json).replace("__TOP_N__", str(len(df)))
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     OUTPUT_HTML.write_text(html, encoding="utf-8")
-    print(f"Saved: {OUTPUT_HTML}")
+    print(f"Saved: {OUTPUT_HTML} (top {len(df)})")
+
+    subprocess.run(["open", "-a", "Google Chrome", str(OUTPUT_HTML)], check=True)
 
 
 if __name__ == "__main__":
