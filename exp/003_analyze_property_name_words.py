@@ -4,20 +4,15 @@ Pipeline:
   1. Normalize titles (NFKC: 全角半角・記号・ローマ数字).
   2. Strip tails (place names from address dict).
   3. Extract katakana chunks and segment them via lexicon longest-match.
-  4. Aggregate sub-token counts (merging spelling variants via ALIASES) and
-     split into two categories:
-     - 物件タイプ(形態語): building category words (ビル, マンション, コーポ…).
-     - 命名スタイル(装飾語): decorative naming words (メゾン, ヒルズ, レジデンス…).
+  4. Aggregate sub-token counts (merging spelling variants via ALIASES).
 
-The lexicon is split into TYPE_LEXICON and STYLE_LEXICON. Chunks that don't
-match anything stay as a single token (likely brand names). ALIASES merges
-spelling variants (e.g. グレース → グレイス, ビラ → ヴィラ) into a canonical form.
-The CSV output tags each token with its category so the lexicons can be grown
-iteratively.
+Chunks that don't match the lexicon stay as a single token (likely brand
+names). ALIASES merges spelling variants (e.g. グレース → グレイス,
+ビラ → ヴィラ) into a canonical form.
 
 Outputs:
-  - Console: 物件タイプ share (with %), top-N 命名スタイル, top-N unclassified.
-  - CSV: full token frequency distribution with category column.
+  - Console: top-N lexicon tokens, top-N unclassified.
+  - CSV: full token frequency distribution.
   - CSV: sample of (raw → cleaned → segmented) for spot-checking.
 """
 
@@ -62,9 +57,10 @@ MIN_CHUNK_LEN = 2
 MIN_TOKEN_LEN = 2
 TOP_N = 50
 
-# 物件タイプ(形態語) — concrete Japanese property-category words.
-# Used to compute building-type share (e.g. ビル/マンション/コーポ).
-TYPE_LEXICON: tuple[str, ...] = (
+# Add to this iteratively by reviewing the unclassified tokens in the output
+# CSV — high-frequency unclassified tokens are candidates for promotion.
+LEXICON: tuple[str, ...] = (
+    # 物件タイプ(形態語)
     "マンション",
     "アパート",
     "アパートメント",
@@ -78,12 +74,6 @@ TYPE_LEXICON: tuple[str, ...] = (
     "タワー",
     "タワーズ",
     "メゾネット",
-)
-
-# 命名スタイル(装飾語) — decorative naming words.
-# Add to this iteratively by reviewing the `category=""` rows of the output
-# CSV — high-frequency unclassified tokens are candidates for promotion.
-STYLE_LEXICON: tuple[str, ...] = (
     # 住居系(装飾)
     "レジデンス",
     "ホームズ",
@@ -161,10 +151,7 @@ STYLE_LEXICON: tuple[str, ...] = (
     "ブラン",
 )
 
-CATEGORY_TYPE = "type"
-CATEGORY_STYLE = "style"
-CATEGORY_OF: dict[str, str] = {t: CATEGORY_TYPE for t in TYPE_LEXICON} | {t: CATEGORY_STYLE for t in STYLE_LEXICON}
-LEXICON_SET: frozenset[str] = frozenset(CATEGORY_OF)
+LEXICON_SET: frozenset[str] = frozenset(LEXICON)
 LEXICON_SORTED: tuple[str, ...] = tuple(sorted(LEXICON_SET, key=len, reverse=True))
 SEPARATOR_CHARS = "・"
 
@@ -430,18 +417,11 @@ def main(force: bool) -> None:
     chunk_counter, chunk_to_tokens = step3_segment(cleaned)
     token_counter = step4_aggregate(chunk_counter, chunk_to_tokens)
 
-    type_ranked = [(t, c) for t, c in token_counter.most_common() if CATEGORY_OF.get(t) == CATEGORY_TYPE]
-    style_ranked = [(t, c) for t, c in token_counter.most_common() if CATEGORY_OF.get(t) == CATEGORY_STYLE]
-    unclassified = [(t, c) for t, c in token_counter.most_common() if t not in CATEGORY_OF]
+    lexicon_ranked = [(t, c) for t, c in token_counter.most_common() if t in LEXICON_SET]
+    unclassified = [(t, c) for t, c in token_counter.most_common() if t not in LEXICON_SET]
 
-    type_total = sum(c for _, c in type_ranked)
-    print(f"\n--- 物件タイプ(形態語)シェア — total {type_total:,} occurrences ---")
-    for rank, (tok, count) in enumerate(type_ranked, 1):
-        share = count / type_total * 100 if type_total else 0
-        print(f"  {rank:>2}. {count:>6,}  {share:>5.1f}%  {tok}")
-
-    print(f"\n--- 命名スタイル(装飾語) top {TOP_N} ---")
-    for rank, (tok, count) in enumerate(style_ranked[:TOP_N], 1):
+    print(f"\n--- top {TOP_N} lexicon tokens ---")
+    for rank, (tok, count) in enumerate(lexicon_ranked[:TOP_N], 1):
         print(f"  {rank:>2}. {count:>6,}  {tok}")
 
     print(f"\n--- top {TOP_N} unclassified tokens (lexicon candidates) ---")
@@ -451,9 +431,9 @@ def main(force: bool) -> None:
     csv_path = OUTPUT_DIR / "token_counts.csv"
     with csv_path.open("w", encoding="utf-8", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["token", "count", "category"])
+        w.writerow(["token", "count"])
         for tok, count in token_counter.most_common():
-            w.writerow([tok, count, CATEGORY_OF.get(tok, "")])
+            w.writerow([tok, count])
     print(f"\nwrote: {csv_path}")
 
     sample_path = OUTPUT_DIR / "segmentation_sample.csv"
