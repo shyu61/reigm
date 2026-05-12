@@ -125,10 +125,10 @@ HTML_TEMPLATE = """<!doctype html>
         shape-rendering: crispEdges;
       }
       .bar.high {
-        fill: var(--high);
+        fill: url(#gradHigh);
       }
       .bar.low {
-        fill: var(--low);
+        fill: url(#gradLow);
       }
 
       .token {
@@ -161,19 +161,21 @@ HTML_TEMPLATE = """<!doctype html>
 
       const W = 1120;
       const TARGET_INNER_W = 720;
-      const COL_GAP = data.length <= 12 ? 18 : 4;
+      const COL_GAP = data.length <= 12 ? 12 : 4;
       const COL_W = Math.max(
-        14,
-        Math.min(80, (TARGET_INNER_W - (data.length - 1) * COL_GAP) / data.length),
+        12,
+        Math.min(54, (TARGET_INNER_W - (data.length - 1) * COL_GAP) / data.length),
       );
       const MARGIN_LEFT = 56;
       const MARGIN_RIGHT = 120;
       const MARGIN_TOP = 32;
       const MARGIN_BOTTOM = 32;
-      const PLOT_H = 540;
+      const PLOT_H = 420;
 
+      const EDGE_PAD = 18;
       const innerW = data.length * (COL_W + COL_GAP) - COL_GAP;
-      const totalW = Math.max(W, MARGIN_LEFT + innerW + MARGIN_RIGHT);
+      const chartW = innerW + EDGE_PAD * 2;
+      const totalW = Math.max(W, MARGIN_LEFT + chartW + MARGIN_RIGHT);
       const totalH = MARGIN_TOP + PLOT_H + MARGIN_BOTTOM;
 
       const maxElev = d3.max(data, (d) => d.mean_elev_m);
@@ -191,6 +193,45 @@ HTML_TEMPLATE = """<!doctype html>
         .attr("width", totalW)
         .attr("height", totalH);
 
+      // --- gradient defs (light at baseline → saturated at tip) ---
+      const HIGH_COLOR = "#d98a6b";
+      const LOW_COLOR = "#6aa9c4";
+      const defs = svg.append("defs");
+      const gradHigh = defs
+        .append("linearGradient")
+        .attr("id", "gradHigh")
+        .attr("x1", "0")
+        .attr("y1", "0")
+        .attr("x2", "0")
+        .attr("y2", "1");
+      gradHigh
+        .append("stop")
+        .attr("offset", "0%")
+        .attr("stop-color", HIGH_COLOR)
+        .attr("stop-opacity", 1);
+      gradHigh
+        .append("stop")
+        .attr("offset", "100%")
+        .attr("stop-color", HIGH_COLOR)
+        .attr("stop-opacity", 0.2);
+      const gradLow = defs
+        .append("linearGradient")
+        .attr("id", "gradLow")
+        .attr("x1", "0")
+        .attr("y1", "0")
+        .attr("x2", "0")
+        .attr("y2", "1");
+      gradLow
+        .append("stop")
+        .attr("offset", "0%")
+        .attr("stop-color", LOW_COLOR)
+        .attr("stop-opacity", 0.2);
+      gradLow
+        .append("stop")
+        .attr("offset", "100%")
+        .attr("stop-color", LOW_COLOR)
+        .attr("stop-opacity", 1);
+
       // --- y axis (gridlines + ticks) ---
       const yTicks = yScale.ticks(8);
       const axisG = svg.append("g").attr("class", "axis");
@@ -200,7 +241,7 @@ HTML_TEMPLATE = """<!doctype html>
           .append("line")
           .attr("class", "gridline")
           .attr("x1", MARGIN_LEFT)
-          .attr("x2", MARGIN_LEFT + innerW)
+          .attr("x2", MARGIN_LEFT + chartW)
           .attr("y1", y)
           .attr("y2", y);
         axisG
@@ -218,13 +259,13 @@ HTML_TEMPLATE = """<!doctype html>
         .append("line")
         .attr("class", "baseline")
         .attr("x1", MARGIN_LEFT)
-        .attr("x2", MARGIN_LEFT + innerW)
+        .attr("x2", MARGIN_LEFT + chartW)
         .attr("y1", baselineY)
         .attr("y2", baselineY);
       svg
         .append("text")
         .attr("class", "baseline-label")
-        .attr("x", MARGIN_LEFT + innerW + 6)
+        .attr("x", MARGIN_LEFT + chartW + 6)
         .attr("y", baselineY)
         .attr("dominant-baseline", "central")
         .text(`baseline ${baseline.toFixed(2)}m`);
@@ -237,7 +278,7 @@ HTML_TEMPLATE = """<!doctype html>
         .attr("class", "col")
         .attr(
           "transform",
-          (_, i) => `translate(${MARGIN_LEFT + i * (COL_W + COL_GAP)}, 0)`,
+          (_, i) => `translate(${MARGIN_LEFT + EDGE_PAD + i * (COL_W + COL_GAP)}, 0)`,
         );
 
       cols
@@ -266,18 +307,21 @@ HTML_TEMPLATE = """<!doctype html>
         .text((d) => fmtDelta(d.mean_vs_baseline_m));
 
       // Token labels sit just on the empty side of the baseline: below for
-      // upward (positive) bars, above for downward (negative) bars.
+      // upward (positive) bars, above for downward (negative) bars. Use
+      // `central` anchor (y is the text's vertical midpoint) so the same
+      // numeric offset gives a visually identical gap on both sides.
+      const TOKEN_GAP = 14;
       cols
         .append("text")
         .attr("class", "token")
         .attr("x", COL_W / 2)
         .attr("y", (d) =>
-          d.mean_elev_m >= baseline ? baselineY + 16 : baselineY - 8,
+          d.mean_elev_m >= baseline
+            ? baselineY + TOKEN_GAP
+            : baselineY - TOKEN_GAP,
         )
         .attr("text-anchor", "middle")
-        .attr("dominant-baseline", (d) =>
-          d.mean_elev_m >= baseline ? "hanging" : "alphabetic",
-        )
+        .attr("dominant-baseline", "central")
         .text((d) => d.token);
     </script>
   </body>
