@@ -1,13 +1,15 @@
 """Analyze the relationship between property-name tokens and area elevation.
 
-For each listing we:
-  1. Segment its title into lexicon tokens (reusing the pipeline from
-     `003_analyze_property_name_words.py`).
-  2. Look up the elevation of its address (from `007_fetch_address_elevation.py`).
+Counting unit matches `003_analyze_property_name_words.py`: each unique
+title contributes once per token occurrence (titles are deduped globally,
+listings/rooms are not the unit). For each unique title we:
+  1. Segment it via 003's pipeline (normalize → strip tails → lexicon split).
+  2. Look up the elevation of its address (first listing's address for that
+     title is canonical, since dup titles overwhelmingly share one building).
 
-Then per lexicon token we compute: count, mean/median elevation, and the gap
-versus the overall baseline. Hypothesis check (e.g. スカイ・ヒルズ at higher
-ground) shows up as a positive baseline gap.
+Per token we compute: count, mean/median elevation, and the gap versus the
+overall baseline. Hypothesis check (e.g. スカイ・ヒルズ at higher ground)
+shows up as a positive baseline gap.
 
 Inputs:
   - data/001_fetch_suumo/listings.jsonl
@@ -80,31 +82,39 @@ def _load_elevations(path: Path) -> dict[str, float]:
     return out
 
 
-def _title_lexicon_tokens(title: str, sorted_places: list[str]) -> set[str]:
-    """Return the set of canonical lexicon tokens contained in the (normalized, stripped) title."""
+def _title_lexicon_tokens(title: str, sorted_places: list[str]) -> list[str]:
+    """Return canonical lexicon tokens emitted by segmenting the title.
+
+    Matches 003's per-occurrence counting (no per-title set dedup): if a token
+    appears twice in a title, it's emitted twice.
+    """
     n = _normalize_title(title)
     if _is_descriptive(n):
-        return set()
+        return []
     cleaned = _strip_tail(n, sorted_places)
-    tokens: set[str] = set()
+    out: list[str] = []
     for chunk in KATAKANA_RE.findall(cleaned):
         for tok in _lexicon_split(chunk):
             if len(tok) < MIN_TOKEN_LEN:
                 continue
             canonical = ALIASES.get(tok, tok)
             if canonical in LEXICON_SET:
-                tokens.add(canonical)
-    return tokens
+                out.append(canonical)
+    return out
 
 
-def _iter_listing_records(path: Path):
+def _load_unique_titles(path: Path) -> dict[str, str]:
+    """Return {title: address}. First listing per title wins, matching 003's dedup."""
+    seen: dict[str, str] = {}
     with path.open(encoding="utf-8") as f:
         for line in f:
             r = json.loads(line)
             t = r.get("title")
             a = r.get("address")
-            if t and a:
-                yield t, a
+            if not t or not a or t in seen:
+                continue
+            seen[t] = a
+    return seen
 
 
 def _summarize(values: list[float]) -> dict[str, float]:
@@ -117,7 +127,7 @@ def _summarize(values: list[float]) -> dict[str, float]:
 
 
 @click.command()
-@click.option("--min-count", type=int, default=MIN_TOKEN_COUNT, help="Drop tokens with fewer than this many listings.")
+@click.option("--min-count", type=int, default=MIN_TOKEN_COUNT, help="Drop tokens with fewer than this many titles.")
 @click.option("--top-n", type=int, default=TOP_N, help="How many tokens to print on each leaderboard.")
 def main(min_count: int, top_n: int) -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -129,11 +139,14 @@ def main(min_count: int, top_n: int) -> None:
     sorted_places = sorted(places, key=len, reverse=True)
     print(f"place dictionary: {len(places):,} entries")
 
+    titles = _load_unique_titles(LISTINGS_PATH)
+    print(f"unique titles: {len(titles):,}")
+
     token_elevs: dict[str, list[float]] = {}
     all_elevs: list[float] = []
     matched = 0
     skipped_no_elev = 0
-    for title, address in _iter_listing_records(LISTINGS_PATH):
+    for title, address in titles.items():
         elev = elev_by_addr.get(address)
         if elev is None:
             skipped_no_elev += 1
@@ -146,8 +159,8 @@ def main(min_count: int, top_n: int) -> None:
         for tok in tokens:
             token_elevs.setdefault(tok, []).append(elev)
 
-    print(f"listings with elevation: {len(all_elevs):,} (skipped {skipped_no_elev:,})")
-    print(f"listings with >=1 lexicon token: {matched:,}")
+    print(f"titles with elevation: {len(all_elevs):,} (skipped {skipped_no_elev:,})")
+    print(f"titles with >=1 lexicon token: {matched:,}")
 
     baseline = _summarize(all_elevs)
     print(
