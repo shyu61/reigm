@@ -7,8 +7,7 @@
 今回はマンション名から形態素ごとにカタカナ語を抽出してランキング化しました。
 形態素で分割するとブランド名をバラバラにしちゃったりするので正確ではないと言えばそうなんですが、その点は後で補足するとして純粋に「ワードとして何が使われているか？」を調査しています。
 
-![katakana_ranking_top20](../../data/005_visualize_token_counts/index.svg)
-<!-- <img src="../../data/005_visualize_token_counts/index.svg" alt="katakana_ranking_top20" width="600"> -->
+![katakana_ranking_top20](../../data/005_visualize_token_counts/index.png)
 
 ### ハイツ/メゾンが最も使われている！
 メゾンに競り勝ちハイツが最も使われているという結果になりました。
