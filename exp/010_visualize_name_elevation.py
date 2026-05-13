@@ -22,7 +22,7 @@ OUTPUT_DIR = PROJECT_ROOT / "data" / SCRIPT_PATH.stem
 OUTPUT_HTML = OUTPUT_DIR / "index.html"
 
 DEFAULT_MIN_COUNT = 50
-DEFAULT_TOKENS = ("ベイ", "リバー", "ヒル", "フォレスト", "スカイ", "ヒルズ", "パーク", "タワー")
+DEFAULT_TOKENS = ("ヒルズ", "スカイ", "ベイ", "リバー", "フォレスト", "ポート")
 
 HTML_TEMPLATE = """<!doctype html>
 <html lang="en">
