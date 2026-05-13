@@ -11,11 +11,14 @@ from pathlib import Path
 import click
 import polars as pl
 
+from html_to_png import html_to_png
+
 SCRIPT_PATH = Path(__file__).resolve()
 PROJECT_ROOT = SCRIPT_PATH.parent.parent
 INPUT_CSV = PROJECT_ROOT / "data" / "003_analyze_property_name_words" / "token_counts.csv"
 OUTPUT_DIR = PROJECT_ROOT / "data" / SCRIPT_PATH.stem
 OUTPUT_HTML = OUTPUT_DIR / "index.html"
+OUTPUT_PNG = OUTPUT_DIR / "index.png"
 
 DEFAULT_TOP_N = 20
 
@@ -67,28 +70,6 @@ HTML_TEMPLATE = """<!doctype html>
         padding: 64px 32px 80px;
       }
 
-      .title {
-        font-size: 44px;
-        font-weight: 800;
-        letter-spacing: -0.025em;
-        margin: 0 0 12px 0;
-        line-height: 1.05;
-      }
-
-      .subtitle {
-        font-size: 15px;
-        color: var(--muted);
-        margin: 0 0 28px 0;
-        max-width: 640px;
-        line-height: 1.55;
-      }
-
-      .divider {
-        height: 3px;
-        background: var(--ink);
-        margin: 0 0 32px 0;
-      }
-
       #chart {
         width: 100%;
         height: auto;
@@ -131,12 +112,6 @@ HTML_TEMPLATE = """<!doctype html>
   </head>
   <body>
     <div class="page">
-      <h1 class="title">Top __TOP_N__ property-name tokens</h1>
-      <p class="subtitle">
-        Most frequent katakana tokens parsed from real-estate listing names. Bar
-        length is proportional to occurrence count across the sampled listings.
-      </p>
-      <div class="divider"></div>
       <svg id="chart" preserveAspectRatio="xMinYMin meet"></svg>
     </div>
 
@@ -231,6 +206,9 @@ def main(top_n: int) -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     OUTPUT_HTML.write_text(html, encoding="utf-8")
     print(f"Saved: {OUTPUT_HTML} (top {len(df)})")
+
+    html_to_png(OUTPUT_HTML, OUTPUT_PNG)
+    print(f"Saved: {OUTPUT_PNG}")
 
     subprocess.run(["open", "-a", "Google Chrome", str(OUTPUT_HTML)], check=True)
 
