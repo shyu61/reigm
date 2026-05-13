@@ -25,10 +25,13 @@ def html_to_png(
     device_scale_factor: int = DEFAULT_DEVICE_SCALE,
     full_page: bool = True,
     wait_ms: int = DEFAULT_WAIT_MS,
+    selector: str | None = None,
 ) -> Path:
     """Render `html` (a path or raw HTML string) to a PNG at `output_path`.
 
-    Returns the absolute output path. Caller is responsible for `playwright install`.
+    If `selector` is set, capture only that element's bounding box (trims away
+    body padding / viewport whitespace). Otherwise capture the page per
+    `full_page`. Returns the absolute output path.
     """
     output = Path(output_path).resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -56,7 +59,10 @@ def html_to_png(
             page.evaluate("document.fonts && document.fonts.ready")
             if wait_ms > 0:
                 page.wait_for_timeout(wait_ms)
-            page.screenshot(path=str(output), full_page=full_page, omit_background=False)
+            if selector is not None:
+                page.locator(selector).screenshot(path=str(output), omit_background=False)
+            else:
+                page.screenshot(path=str(output), full_page=full_page, omit_background=False)
         finally:
             browser.close()
     return output
