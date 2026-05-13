@@ -15,11 +15,14 @@ from pathlib import Path
 import click
 import polars as pl
 
+from html_to_png import html_to_png
+
 SCRIPT_PATH = Path(__file__).resolve()
 PROJECT_ROOT = SCRIPT_PATH.parent.parent
 INPUT_CSV = PROJECT_ROOT / "data" / "008_analyze_name_elevation" / "token_elevation.csv"
 OUTPUT_DIR = PROJECT_ROOT / "data" / SCRIPT_PATH.stem
 OUTPUT_HTML = OUTPUT_DIR / "index.html"
+OUTPUT_PNG = OUTPUT_DIR / "index.png"
 
 DEFAULT_MIN_COUNT = 50
 DEFAULT_TOKENS = ("ヒルズ", "スカイ", "ベイ", "リバー", "フォレスト", "ポート")
@@ -72,23 +75,7 @@ HTML_TEMPLATE = """<!doctype html>
         padding: 64px 32px 80px;
       }
 
-      .title {
-        font-size: 40px;
-        font-weight: 800;
-        letter-spacing: -0.025em;
-        margin: 0 0 24px 0;
-        line-height: 1.1;
-      }
-
-      .divider {
-        height: 3px;
-        background: var(--ink);
-        margin: 0 0 24px 0;
-      }
-
       #chart {
-        width: 100%;
-        height: auto;
         display: block;
         overflow: visible;
       }
@@ -149,8 +136,6 @@ HTML_TEMPLATE = """<!doctype html>
   </head>
   <body>
     <div class="page">
-      <h1 class="title">物件名トークン × エリア標高</h1>
-      <div class="divider"></div>
       <svg id="chart" preserveAspectRatio="xMinYMin meet"></svg>
     </div>
 
@@ -159,7 +144,6 @@ HTML_TEMPLATE = """<!doctype html>
       const data = __DATA_JSON__;
       const baseline = __BASELINE__;
 
-      const W = 1120;
       const TARGET_INNER_W = 720;
       const COL_GAP = data.length <= 12 ? 12 : 4;
       const COL_W = Math.max(
@@ -175,7 +159,7 @@ HTML_TEMPLATE = """<!doctype html>
       const EDGE_PAD = 18;
       const innerW = data.length * (COL_W + COL_GAP) - COL_GAP;
       const chartW = innerW + EDGE_PAD * 2;
-      const totalW = Math.max(W, MARGIN_LEFT + chartW + MARGIN_RIGHT);
+      const totalW = MARGIN_LEFT + chartW + MARGIN_RIGHT;
       const totalH = MARGIN_TOP + PLOT_H + MARGIN_BOTTOM;
 
       const maxElev = d3.max(data, (d) => d.mean_elev_m);
@@ -368,6 +352,9 @@ def main(min_count: int, tokens: str) -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     OUTPUT_HTML.write_text(html, encoding="utf-8")
     print(f"Saved: {OUTPUT_HTML}")
+
+    html_to_png(OUTPUT_HTML, OUTPUT_PNG, selector="#chart")
+    print(f"Saved: {OUTPUT_PNG}")
 
     subprocess.run(["open", "-a", "Google Chrome", str(OUTPUT_HTML)], check=True)
 
