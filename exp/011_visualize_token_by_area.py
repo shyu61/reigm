@@ -23,6 +23,8 @@ from pathlib import Path
 import click
 import polars as pl
 
+from html_to_png import html_to_png
+
 SCRIPT_PATH = Path(__file__).resolve()
 PROJECT_ROOT = SCRIPT_PATH.parent.parent
 INPUT_CSV = PROJECT_ROOT / "data" / "009_aggregate_token_by_area" / "token_ward_long.csv"
@@ -30,6 +32,7 @@ OUTPUT_DIR = PROJECT_ROOT / "data" / SCRIPT_PATH.stem
 CACHE_DIR = OUTPUT_DIR / "cache"
 GEOJSON_CACHE = CACHE_DIR / "tokyo_23ku.geojson"
 OUTPUT_HTML = OUTPUT_DIR / "index.html"
+OUTPUT_PNG = OUTPUT_DIR / "index.png"
 
 # Per-ward GeoJSON from niiyz/JapanCityGeoJson (high-res; 23 individual files
 # at JIS codes 13101..13123 merged into one FeatureCollection).
@@ -37,7 +40,7 @@ WARD_GEO_URL_TMPL = "https://raw.githubusercontent.com/niiyz/JapanCityGeoJson/ma
 WARD_JIS_CODES = tuple(str(c) for c in range(13101, 13124))
 WARD_NAME_PROP = "N03_004"
 
-DEFAULT_TOKENS = ("ヒルズ", "タワー", "スカイ", "ベイ", "リバー", "フォレスト")
+DEFAULT_TOKENS = ("フォレスト", "ヒルズ", "スカイ", "タワー", "ベイ", "リバー")
 
 HTML_TEMPLATE = """<!doctype html>
 <html lang="ja">
@@ -52,11 +55,11 @@ HTML_TEMPLATE = """<!doctype html>
     />
     <style>
       :root {
-        --bg: #0e1116;
-        --panel: #161a22;
-        --ink: #f3f5f8;
-        --muted: #8a93a3;
-        --border: #2a313d;
+        --bg: #eaf3fa;
+        --panel: #ffffff;
+        --ink: #0e1116;
+        --muted: #5c6470;
+        --border: #cbd5dc;
       }
       * { box-sizing: border-box; }
       html, body {
@@ -71,20 +74,6 @@ HTML_TEMPLATE = """<!doctype html>
         max-width: 1280px;
         margin: 0 auto;
         padding: 56px 32px 96px;
-      }
-      .title {
-        font-size: 36px;
-        font-weight: 800;
-        letter-spacing: -0.02em;
-        margin: 0 0 8px 0;
-        line-height: 1.15;
-      }
-      .subtitle {
-        color: var(--muted);
-        font-size: 14px;
-        margin: 0 0 32px 0;
-        max-width: 720px;
-        line-height: 1.5;
       }
       .grid {
         display: grid;
@@ -114,18 +103,19 @@ HTML_TEMPLATE = """<!doctype html>
         margin-bottom: 8px;
       }
       .map svg { width: 100%; height: auto; display: block; }
-      .ward { stroke: rgba(255,255,255,0.18); stroke-width: 0.6; }
+      .ward { stroke: rgba(14,17,22,0.25); stroke-width: 0.6; }
       .ward.empty { fill: var(--bg); }
       .ward-label {
         font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
         font-weight: 700;
-        fill: #ffffff;
+        fill: #0e1116;
         paint-order: stroke;
-        stroke: rgba(0,0,0,0.75);
+        stroke: rgba(255,255,255,0.85);
         stroke-width: 2.4px;
         stroke-linejoin: round;
         pointer-events: none;
       }
+      .ward-label .name { font-size: 9px; font-weight: 600; }
       .ward-label .lift { font-size: 11px; font-weight: 800; }
       .legend {
         margin-top: 40px;
@@ -146,11 +136,6 @@ HTML_TEMPLATE = """<!doctype html>
   </head>
   <body>
     <div class="page">
-      <h1 class="title">物件名トークン × エリア (東京23区)</h1>
-      <p class="subtitle">
-        各マップは、ある語が物件名に含まれる確率がその区でベース率と比べてどれだけ高いか (lift) を示す。
-        色が明るいほど、その語がその区で過剰に使われている。
-      </p>
       <div id="grid" class="grid"></div>
 
       <div class="legend">
@@ -170,10 +155,11 @@ HTML_TEMPLATE = """<!doctype html>
 
       const features = GEO.features;
 
-      // Shared color scale: dark for low lift, salmon for high lift.
-      const COLOR_LO = "#1a1d24";
-      const COLOR_MID = "#7a4a3e";
-      const COLOR_HI = "#f0a585";
+      // Shared color scale on a light background: pale for low lift, salmon
+      // saturated for high lift.
+      const COLOR_LO = "#f4ece6";
+      const COLOR_MID = "#e9b89e";
+      const COLOR_HI = "#c45a3a";
       const color = d3
         .scaleLinear()
         .domain([
@@ -253,9 +239,17 @@ HTML_TEMPLATE = """<!doctype html>
           });
         labels
           .append("text")
+          .attr("class", "name")
+          .attr("text-anchor", "middle")
+          .attr("dominant-baseline", "central")
+          .attr("dy", "-0.55em")
+          .text((d) => d.ward);
+        labels
+          .append("text")
           .attr("class", "lift")
           .attr("text-anchor", "middle")
           .attr("dominant-baseline", "central")
+          .attr("dy", "0.55em")
           .text((d) => `×${fmt(d.lift)}`);
       });
 
@@ -288,20 +282,22 @@ HTML_TEMPLATE = """<!doctype html>
         .attr("height", lgH)
         .attr("rx", 3)
         .attr("fill", "url(#legendGrad)");
-      // ticks at lo, 1.0, hi
-      const ticks = [liftLo, 1, liftHi];
+      // ticks at 1.0 and hi. The hi tick is end-anchored so its label stays
+      // inside the SVG (middle anchor at x=lgW clips half off).
+      const ticks = [1, liftHi];
       const xScale = d3.scaleLinear().domain([liftLo, liftHi]).range([0, lgW]);
-      ticks.forEach((t) => {
+      ticks.forEach((t, i) => {
+        const isLast = i === ticks.length - 1;
         legendSvg
           .append("text")
           .attr("x", xScale(t))
           .attr("y", lgH + 18)
-          .attr("text-anchor", "middle")
-          .attr("fill", "#f3f5f8")
+          .attr("text-anchor", isLast ? "end" : "middle")
+          .attr("fill", "#0e1116")
           .style("font-family", "JetBrains Mono, ui-monospace, monospace")
           .style("font-size", "11px")
           .style("font-weight", 600)
-          .text(t.toFixed(2));
+          .text(isLast ? Math.round(t).toString() : t.toFixed(2));
       });
     </script>
   </body>
@@ -385,6 +381,9 @@ def main(tokens: str) -> None:
     )
     OUTPUT_HTML.write_text(html, encoding="utf-8")
     print(f"Saved: {OUTPUT_HTML}")
+
+    html_to_png(OUTPUT_HTML, OUTPUT_PNG, selector=".page")
+    print(f"Saved: {OUTPUT_PNG}")
 
     subprocess.run(["open", "-a", "Google Chrome", str(OUTPUT_HTML)], check=True)
 

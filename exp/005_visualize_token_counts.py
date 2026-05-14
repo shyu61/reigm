@@ -20,7 +20,7 @@ OUTPUT_DIR = PROJECT_ROOT / "data" / SCRIPT_PATH.stem
 OUTPUT_HTML = OUTPUT_DIR / "index.html"
 OUTPUT_PNG = OUTPUT_DIR / "index.png"
 
-DEFAULT_TOP_N = 20
+DEFAULT_TOP_N = 10
 
 HTML_TEMPLATE = """<!doctype html>
 <html lang="en">
@@ -124,9 +124,12 @@ HTML_TEMPLATE = """<!doctype html>
       const ROW_GAP = 6;
       const RANK_COL = 44;
       const PAD = 14;
+      const MARGIN_X = 24;
+      const MARGIN_Y = 64;
       const BAR_AREA = W - RANK_COL;
+      const totalW = W + MARGIN_X * 2;
 
-      const totalH = data.length * (ROW_H + ROW_GAP) - ROW_GAP;
+      const totalH = data.length * (ROW_H + ROW_GAP) - ROW_GAP + MARGIN_Y * 2;
       const fmt = d3.format(",");
       const xScale = d3
         .scaleLinear()
@@ -135,8 +138,8 @@ HTML_TEMPLATE = """<!doctype html>
 
       const svg = d3
         .select("#chart")
-        .attr("viewBox", `0 0 ${W} ${totalH}`)
-        .attr("width", W)
+        .attr("viewBox", `0 0 ${totalW} ${totalH}`)
+        .attr("width", totalW)
         .attr("height", totalH);
 
       const rows = svg
@@ -144,7 +147,7 @@ HTML_TEMPLATE = """<!doctype html>
         .data(data)
         .join("g")
         .attr("class", "row")
-        .attr("transform", (_, i) => `translate(0, ${i * (ROW_H + ROW_GAP)})`);
+        .attr("transform", (_, i) => `translate(${MARGIN_X}, ${MARGIN_Y + i * (ROW_H + ROW_GAP)})`);
 
       rows
         .append("text")
@@ -207,7 +210,7 @@ def main(top_n: int) -> None:
     OUTPUT_HTML.write_text(html, encoding="utf-8")
     print(f"Saved: {OUTPUT_HTML} (top {len(df)})")
 
-    html_to_png(OUTPUT_HTML, OUTPUT_PNG)
+    html_to_png(OUTPUT_HTML, OUTPUT_PNG, selector="#chart")
     print(f"Saved: {OUTPUT_PNG}")
 
     subprocess.run(["open", "-a", "Google Chrome", str(OUTPUT_HTML)], check=True)
