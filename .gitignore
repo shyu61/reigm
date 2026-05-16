@@ -20,3 +20,4 @@ log/
 *.log
 
 exp/notebook.ipynb
+.DS_Store
