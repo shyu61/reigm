@@ -228,6 +228,13 @@ HTML_TEMPLATE = """<!doctype html>
             .filter((r, i) => i < LABEL_TOP_N || r.lift >= LABEL_LIFT_MIN)
             .map((r) => r.ward),
         );
+        // Manual nudges (viewBox units) for wards whose centroids sit so close
+        // that their two-line labels collide (e.g. 千代田区 / 中央区).
+        const LABEL_OFFSETS = {
+          "千代田区": [0, -8],
+          "中央区": [0, 6],
+          "江東区": [8, 2],
+        };
         const labels = svg
           .selectAll("g.ward-label")
           .data(ranked.filter((r) => labelSet.has(r.ward)))
@@ -235,7 +242,8 @@ HTML_TEMPLATE = """<!doctype html>
           .attr("class", "ward-label")
           .attr("transform", (d) => {
             const [cx, cy] = sharedPath.centroid(d.feature);
-            return `translate(${cx}, ${cy})`;
+            const off = LABEL_OFFSETS[d.ward] || [0, 0];
+            return `translate(${cx + off[0]}, ${cy + off[1]})`;
           });
         labels
           .append("text")
