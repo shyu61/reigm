@@ -21,7 +21,7 @@ POST_DIR = PROJECT_ROOT / "articles" / "x" / "001_property_name_words"  # final 
 
 RANKING_PNG = PROJECT_ROOT / "data" / "014_visualize_token_counts_x" / "index.png"
 ELEVATION_PNG = PROJECT_ROOT / "data" / "010_visualize_name_elevation" / "index.png"
-TOWER_PNG = PROJECT_ROOT / "data" / "011_visualize_token_by_area" / "tower.png"
+TOWER_PNG = PROJECT_ROOT / "data" / "015_visualize_token_by_area_x" / "index.png"
 
 PAGE_TEMPLATE = """<!doctype html>
 <html lang="ja">
@@ -38,7 +38,7 @@ PAGE_TEMPLATE = """<!doctype html>
         --bg: #e3eef6;
         --ink: #0e1116;
         --muted: #5c6470;
-        --accent: #8fbed9;
+        --accent: #6fa3c4; /* eyebrow text: slightly darker than the chart's #8fbed9 for legibility */
         --hot: #e0533d;
         --mark: #ffe14d;
       }
