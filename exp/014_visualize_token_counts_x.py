@@ -44,6 +44,7 @@ HTML_TEMPLATE = """<!doctype html>
         --ink: #0e1116;
         --muted: #5c6470;
         --accent: #8fbed9;
+        --hot: #e0533d; /* red emphasis for the top 2 bars (matches the post's hot color) */
         --border: #0e1116;
       }
 
@@ -96,13 +97,19 @@ HTML_TEMPLATE = """<!doctype html>
         shape-rendering: crispEdges;
       }
       .bar.top {
-        fill: var(--accent);
+        fill: var(--hot);
+        /* keep the dark border line from .bar so the red bars stay outlined */
       }
 
       .token {
         font-size: 14px;
         font-weight: 700;
         fill: var(--ink);
+      }
+      /* white text reads on the red top bars */
+      .token.top,
+      .count.top {
+        fill: #ffffff;
       }
 
       .count {
@@ -184,7 +191,7 @@ HTML_TEMPLATE = """<!doctype html>
 
       barG
         .append("text")
-        .attr("class", "token")
+        .attr("class", (_, i) => (i < TOP_N ? "token top" : "token"))
         .attr("x", PAD)
         .attr("y", (_, i) => rowH(i) / 2)
         .attr("dominant-baseline", "central")
@@ -192,7 +199,7 @@ HTML_TEMPLATE = """<!doctype html>
 
       barG
         .append("text")
-        .attr("class", "count")
+        .attr("class", (_, i) => (i < TOP_N ? "count top" : "count"))
         .attr("x", (d) => xScale(d.count) - PAD)
         .attr("y", (_, i) => rowH(i) / 2)
         .attr("dominant-baseline", "central")
