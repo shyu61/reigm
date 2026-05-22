@@ -17,13 +17,11 @@ from html_to_png import html_to_png
 SCRIPT_PATH = Path(__file__).resolve()
 PROJECT_ROOT = SCRIPT_PATH.parent.parent
 OUTPUT_DIR = PROJECT_ROOT / "data" / SCRIPT_PATH.stem  # intermediate HTML
-POST_DIR = PROJECT_ROOT / "articles" / "x"  # final PNGs
+POST_DIR = PROJECT_ROOT / "articles" / "x" / "001_property_name_words"  # final PNGs
 
 RANKING_PNG = PROJECT_ROOT / "data" / "005_visualize_token_counts" / "index.png"
 ELEVATION_PNG = PROJECT_ROOT / "data" / "010_visualize_name_elevation" / "index.png"
 TOWER_PNG = PROJECT_ROOT / "data" / "011_visualize_token_by_area" / "tower.png"
-
-ARTICLE_SLUG = "001"
 
 PAGE_TEMPLATE = """<!doctype html>
 <html lang="ja">
@@ -244,7 +242,7 @@ def main() -> None:
         html_path = OUTPUT_DIR / f"{name}.html"
         html_path.write_text(html, encoding="utf-8")
 
-        png_path = POST_DIR / f"{ARTICLE_SLUG}_{name}.png"
+        png_path = POST_DIR / f"{name}.png"
         html_to_png(html_path, png_path, selector=".card")
         print(f"Saved: {png_path}")
 
