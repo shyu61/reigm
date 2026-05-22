@@ -19,7 +19,7 @@ PROJECT_ROOT = SCRIPT_PATH.parent.parent
 OUTPUT_DIR = PROJECT_ROOT / "data" / SCRIPT_PATH.stem  # intermediate HTML
 POST_DIR = PROJECT_ROOT / "articles" / "x" / "001_property_name_words"  # final PNGs
 
-RANKING_PNG = PROJECT_ROOT / "data" / "005_visualize_token_counts" / "index.png"
+RANKING_PNG = PROJECT_ROOT / "data" / "014_visualize_token_counts_x" / "index.png"
 ELEVATION_PNG = PROJECT_ROOT / "data" / "010_visualize_name_elevation" / "index.png"
 TOWER_PNG = PROJECT_ROOT / "data" / "011_visualize_token_by_area" / "tower.png"
 
@@ -178,12 +178,12 @@ def build_page(inner: str, width: int) -> str:
 def post1_ranking() -> str:
     img = data_uri(RANKING_PNG)
     return f"""
-      <p class="eyebrow">東京23区 賃貸マンション名 大調査 ／ SUUMO 約3.8万件</p>
+      <p class="eyebrow">東京23区 賃貸マンション名 大調査</p>
       <h1 class="headline">一番多いカタカナ語は、<span class="mark">「ハイツ」</span>。<br>
         でも2位との差は、たった<span class="hot">15件</span>。</h1>
       <div class="chartwrap">
         <img src="{img}" alt="カタカナ語ランキングtop10" />
-        <div class="ring" style="top:11%; left:84.5%; width:14.5%; height:16%;"></div>
+        <div class="ring" style="top:10%; left:84.5%; width:14.5%; height:22.5%;"></div>
         <div class="anno-label" style="top:1%; right:0.5%;">↓ 差はたった15件</div>
       </div>
       <div class="footer"><span>カタカナ語ランキング top10</span><span class="note">詳しくは note で →</span></div>
