@@ -58,11 +58,12 @@ PAGE_TEMPLATE = """<!doctype html>
         color: var(--ink);
       }
       .eyebrow {
+        display: inline-block;
         font-size: 22px;
-        font-weight: 700;
+        font-weight: 800;
         letter-spacing: 0.04em;
         color: var(--accent);
-        margin: 0 0 14px;
+        margin: 0 0 16px;
       }
       .headline {
         font-size: 50px;
