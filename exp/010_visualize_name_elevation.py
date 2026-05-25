@@ -13,7 +13,7 @@ import subprocess
 from pathlib import Path
 
 import click
-import polars as pl
+import pandas as pd
 
 from html_to_png import html_to_png
 
@@ -328,11 +328,11 @@ HTML_TEMPLATE = """<!doctype html>
     help="Comma-separated tokens to display. Pass empty string ('') to show all above --min-count.",
 )
 def main(min_count: int, tokens: str) -> None:
-    df = pl.read_csv(INPUT_CSV)
+    df = pd.read_csv(INPUT_CSV)
     # Compute baseline from the full table before any filtering so the displayed
     # baseline matches 008's overall baseline regardless of which tokens we show.
-    full_means = df["mean_elev_m"].to_list()
-    full_deltas = df["mean_vs_baseline_m"].to_list()
+    full_means = df["mean_elev_m"].tolist()
+    full_deltas = df["mean_vs_baseline_m"].tolist()
     baseline = round(
         statistics.fmean(m - d for m, d in zip(full_means, full_deltas, strict=False)),
         2,
@@ -340,13 +340,13 @@ def main(min_count: int, tokens: str) -> None:
 
     token_list = [t.strip() for t in tokens.split(",") if t.strip()]
     if token_list:
-        df = df.filter(pl.col("token").is_in(token_list))
+        df = df[df["token"].isin(token_list)]
     else:
-        df = df.filter(pl.col("count") >= min_count)
-    df = df.sort("mean_elev_m", descending=True)
+        df = df[df["count"] >= min_count]
+    df = df.sort_values("mean_elev_m", ascending=False)
     print(f"baseline = {baseline} m; tokens shown: {len(df):,}")
 
-    data_json = json.dumps(df.to_dicts(), ensure_ascii=False)
+    data_json = json.dumps(df.to_dict(orient="records"), ensure_ascii=False)
     html = HTML_TEMPLATE.replace("__DATA_JSON__", data_json).replace("__BASELINE__", str(baseline))
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)

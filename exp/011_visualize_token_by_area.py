@@ -21,7 +21,7 @@ import urllib.request
 from pathlib import Path
 
 import click
-import polars as pl
+import pandas as pd
 
 from html_to_png import html_to_png
 
@@ -353,15 +353,15 @@ def main(tokens: str) -> None:
     if not token_list:
         raise click.UsageError("--tokens must contain at least one token")
 
-    df = pl.read_csv(INPUT_CSV)
-    df = df.filter(pl.col("token").is_in(token_list)).filter(pl.col("ward").is_in(list(valid_wards)))
-    missing = [t for t in token_list if t not in set(df["token"].unique().to_list())]
+    df = pd.read_csv(INPUT_CSV)
+    df = df[df["token"].isin(token_list) & df["ward"].isin(list(valid_wards))]
+    missing = [t for t in token_list if t not in set(df["token"].unique().tolist())]
     if missing:
         print(f"warning: no rows for tokens {missing}; they will render as all-empty")
 
     data: dict[str, dict[str, dict[str, float]]] = {t: {} for t in token_list}
     meta: dict[str, dict[str, int]] = {}
-    for row in df.iter_rows(named=True):
+    for _, row in df.iterrows():
         data[row["token"]][row["ward"]] = {
             "count": int(row["count"]),
             "lift": float(row["lift"]),

@@ -13,7 +13,7 @@ import subprocess
 from pathlib import Path
 
 import click
-import polars as pl
+import pandas as pd
 
 from html_to_png import html_to_png
 
@@ -221,8 +221,8 @@ HTML_TEMPLATE = """<!doctype html>
     help="Number of top tokens to render.",
 )
 def main(top_n: int) -> None:
-    df = pl.read_csv(INPUT_CSV).sort("count", descending=True).head(top_n)
-    data_json = json.dumps(df.to_dicts(), ensure_ascii=False)
+    df = pd.read_csv(INPUT_CSV).sort_values("count", ascending=False).head(top_n)
+    data_json = json.dumps(df.to_dict(orient="records"), ensure_ascii=False)
     html = HTML_TEMPLATE.replace("__DATA_JSON__", data_json).replace("__TOP_N__", str(len(df)))
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
