@@ -13,5 +13,7 @@ class Settings(BaseSettings):
     s3_region: str = "ap-northeast-1"
     s3_bucket_name: str = "reigm-data"
 
+    google_maps_api_key: str = ""
+
 
 settings = Settings()
