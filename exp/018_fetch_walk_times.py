@@ -31,6 +31,7 @@ Routes API enabled. Full set ≈ 9.9k elements + ≈9.9k Place Details — insid
 
 import csv
 import json
+import random
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -69,6 +70,12 @@ REQUEST_TIMEOUT = 30.0
 # Once this many buildings have errored, stop dispatching new work — almost always
 # a quota or auth problem, not bad data. Cached progress is saved; fix and re-run.
 MAX_ERRORS = 25
+# Transient HTTP statuses worth retrying: 429 = per-minute quota, 503 = backend blip.
+# We back off exponentially with jitter so concurrent workers spread across the next
+# quota-minute instead of all retrying in lockstep.
+RETRY_STATUSES = {429, 503}
+MAX_RETRIES = 6
+BACKOFF_BASE = 2.0  # seconds; delay = BACKOFF_BASE * 2**attempt + jitter
 
 OUTPUT_FIELDS = [
     "building_title",
@@ -132,6 +139,26 @@ def _check(r: httpx.Response, label: str) -> None:
     r.raise_for_status()
 
 
+def _send(client: httpx.Client, method: str, url: str, label: str, **kwargs) -> httpx.Response:
+    """Perform an HTTP request, retrying transient quota/availability errors with
+    exponential backoff + jitter. Honors a numeric Retry-After when present. Raises
+    (via _check) on non-retryable errors or once retries are exhausted."""
+    r = None
+    for attempt in range(MAX_RETRIES + 1):
+        r = client.request(method, url, timeout=REQUEST_TIMEOUT, **kwargs)
+        if r.is_success or r.status_code not in RETRY_STATUSES or attempt == MAX_RETRIES:
+            break
+        retry_after = r.headers.get("Retry-After", "")
+        if retry_after.isdigit():
+            delay = float(retry_after)
+        else:
+            delay = BACKOFF_BASE * (2**attempt) + random.uniform(0, 1)
+        print(f"    .. {label} HTTP {r.status_code}; retry {attempt + 1}/{MAX_RETRIES} in {delay:.1f}s")
+        time.sleep(delay)
+    _check(r, label)
+    return r
+
+
 def _log_raw(api: str, ref: str, response: object) -> None:
     """Append one raw API response to the audit log, tagged with the API and a ref key."""
     _append_jsonl(RAW_LOG, {"api": api, "ref": ref, "response": response})
@@ -144,8 +171,7 @@ def _places_text_search_id(client: httpx.Client, query: str, key: str) -> str | 
         "X-Goog-FieldMask": "places.id",
     }
     body = {"textQuery": query, "languageCode": "ja", "regionCode": "JP", "maxResultCount": 1}
-    r = client.post(PLACES_TEXT_SEARCH_URL, headers=headers, json=body, timeout=REQUEST_TIMEOUT)
-    _check(r, "TextSearch")
+    r = _send(client, "POST", PLACES_TEXT_SEARCH_URL, "TextSearch", headers=headers, json=body)
     data = r.json()
     _log_raw("text_search", query, data)
     places = data.get("places") or []
@@ -155,8 +181,7 @@ def _places_text_search_id(client: httpx.Client, query: str, key: str) -> str | 
 def _place_details_essentials(client: httpx.Client, place_id: str, key: str) -> dict | None:
     headers = {"X-Goog-Api-Key": key, "X-Goog-FieldMask": "location,formattedAddress,types"}
     url = PLACE_DETAILS_URL_TEMPLATE.format(place_id=place_id)
-    r = client.get(url, headers=headers, params={"languageCode": "ja"}, timeout=REQUEST_TIMEOUT)
-    _check(r, "PlaceDetails")
+    r = _send(client, "GET", url, "PlaceDetails", headers=headers, params={"languageCode": "ja"})
     data = r.json()
     _log_raw("place_details", place_id, data)
     loc = data.get("location")
@@ -179,8 +204,7 @@ def _geocode_station(client: httpx.Client, name: str, key: str) -> dict | None:
         "bounds": TOKYO_BOUNDS,
         "key": key,
     }
-    r = client.get(GEOCODE_URL, params=params, timeout=REQUEST_TIMEOUT)
-    _check(r, "Geocode")
+    r = _send(client, "GET", GEOCODE_URL, "Geocode", params=params)
     data = r.json()
     _log_raw("geocode", name, data)
     results = data.get("results") or []
@@ -214,8 +238,7 @@ def _route_matrix_walk(
         "destinations": [{"waypoint": {"placeId": pid}} for pid in destination_place_ids],
         "travelMode": "WALK",
     }
-    r = client.post(ROUTE_MATRIX_URL, headers=headers, json=body, timeout=REQUEST_TIMEOUT)
-    _check(r, "RouteMatrix")
+    r = _send(client, "POST", ROUTE_MATRIX_URL, "RouteMatrix", headers=headers, json=body)
     data = r.json()
     _log_raw("route_matrix", ref, data)
     out: list[dict] = []
