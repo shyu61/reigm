@@ -24,8 +24,7 @@ def fmt_size(n_bytes: int) -> str:
 @click.option("--key-prefix", "-k", type=str, required=True)
 @click.option("--max-concurrency", "-c", type=int, default=10, help="Max concurrent threads for multipart uploads")
 @click.option("--skip-subdir", "-s", type=str, default="", help="Subdirectory names to skip (comma-separated)")
-@click.option("--replace", "-r", is_flag=True, default=False, help="Delete all existing S3 objects before uploading")
-def main(input_dir, key_prefix, max_concurrency, skip_subdir, replace):
+def main(input_dir, key_prefix, max_concurrency, skip_subdir):
     base_path = Path(__file__).parent.parent / input_dir
 
     if not base_path.exists() or not base_path.is_dir():
@@ -42,18 +41,6 @@ def main(input_dir, key_prefix, max_concurrency, skip_subdir, replace):
         for obj in page.get("Contents", []):
             existing[obj["Key"]] = obj["Size"]
     print(f"Found {len(existing)} existing objects in S3")
-
-    if replace:
-        keys_to_delete = list(existing.keys())
-        # S3 delete_objects accepts up to 1000 keys per request
-        for i in range(0, len(keys_to_delete), 1000):
-            batch = keys_to_delete[i : i + 1000]
-            s3.delete_objects(
-                Bucket=settings.s3_bucket_name,
-                Delete={"Objects": [{"Key": k} for k in batch]},
-            )
-        print(f"Deleted {len(keys_to_delete)} existing objects from S3")
-        existing = {}
 
     skip_dirs = {s.strip() for s in skip_subdir.split(",") if s.strip()}
 
