@@ -43,7 +43,9 @@
       "Read(**/.env)",
       "Bash(cat **/.env)",
       "Bash(head **/.env)",
-      "Bash(tail **/.env)"
+      "Bash(tail **/.env)",
+      "Bash(rm:*)",
+      "Bash(git clean:*)"
     ]
   }
 }
