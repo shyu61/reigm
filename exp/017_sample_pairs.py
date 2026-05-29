@@ -106,18 +106,15 @@ def _load_buildings(path: Path) -> dict[tuple[str, str], dict]:
     return buildings
 
 
-def _allocate_station(
-    pairs: list[tuple],
-    target: int,
-    rng: random.Random,
-    selected_buildings: set,
-) -> list[tuple]:
+def _allocate_station(pairs: list[tuple], target: int, rng: random.Random) -> list[tuple]:
     """Pick `target` pairs for one station, balanced across stated_min buckets.
 
     Round-robins over stated_min buckets (sorted) so the quota spreads across表記
-    時間. Within a bucket, prefers buildings already selected for another station
-    — this creates same-building cross-station contrasts and saves Place Details
-    calls downstream. Deterministic given the seeded shuffle.
+    時間. Within a bucket, picks purely at random (seeded shuffle) — we do NOT bias
+    selection toward buildings shared with other stations: that would over-sample
+    inter-station overlap zones and risk an upward bias on per-station error, and
+    it saves nothing (Place Details stays inside the free tier either way).
+    Same-building cross-station contrasts still arise naturally for Topic 3.
     """
     buckets: dict[int, list[tuple]] = defaultdict(list)
     for p in pairs:
@@ -135,11 +132,7 @@ def _allocate_station(
             bucket = buckets[m]
             if not bucket:
                 continue
-            # Reuse preference: grab a pair whose building is already selected.
-            idx = next((i for i, p in enumerate(bucket) if p[0] in selected_buildings), 0)
-            p = bucket.pop(idx)
-            chosen.append(p)
-            selected_buildings.add(p[0])
+            chosen.append(bucket.pop())  # bucket is shuffled → pop() is a random draw
             progressed = True
         if not progressed:
             break
@@ -175,11 +168,10 @@ def main(max_stations: int | None) -> None:
         eligible = eligible[:max_stations]
         print(f"  capped to {len(eligible)} stations for this run")
 
-    selected_buildings: set = set()
     sampled: list[dict] = []
     per_station_count: dict[str, int] = {}
     for station in eligible:
-        chosen = _allocate_station(pairs_by_station[station], PAIRS_PER_STATION, rng, selected_buildings)
+        chosen = _allocate_station(pairs_by_station[station], PAIRS_PER_STATION, rng)
         per_station_count[station] = len(chosen)
         for (title, address), st, stated_min in chosen:
             sampled.append(
