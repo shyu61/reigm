@@ -20,6 +20,9 @@ Cost safety / robustness:
     and waste billable elements, so we don't.
   * --dry-run prints the exact number of *new* (billable) calls without making
     any. --limit N processes only the first N buildings (tiny-scale check).
+  * Concurrent: stations are geocoded first (phase 1, deduped), then buildings
+    are processed in a thread pool (phase 2). --workers sets the pool size.
+    Cache writes are serialized by a lock; HTTP runs in parallel.
 
 Required: GOOGLE_MAPS_API_KEY in `.env` with Places API (New), Geocoding API,
 Routes API enabled. Full set ≈ 9.9k elements + ≈9.9k Place Details — inside the
@@ -28,12 +31,19 @@ Routes API enabled. Full set ≈ 9.9k elements + ≈9.9k Place Details — insid
 
 import csv
 import json
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import click
 import httpx
 
 from settings import settings
+
+# Guards all append-only cache/raw writes so worker threads don't interleave lines.
+_WRITE_LOCK = threading.Lock()
+DEFAULT_WORKERS = 8
 
 SCRIPT_PATH = Path(__file__).resolve()
 DATA_DIR = SCRIPT_PATH.parent.parent / "data"
@@ -56,9 +66,9 @@ ROUTE_MATRIX_URL = "https://routes.googleapis.com/distanceMatrix/v2:computeRoute
 # Rough bbox covering Tokyo 23-ku, used to bias Geocoding API results.
 TOKYO_BOUNDS = "35.50,139.55|35.85,139.95"
 REQUEST_TIMEOUT = 30.0
-# Stop the run if this many buildings error in a row — almost always a quota or
-# auth problem, not bad data; better to halt than burn through the list failing.
-MAX_CONSECUTIVE_ERRORS = 10
+# Once this many buildings have errored, stop dispatching new work — almost always
+# a quota or auth problem, not bad data. Cached progress is saved; fix and re-run.
+MAX_ERRORS = 25
 
 OUTPUT_FIELDS = [
     "building_title",
@@ -99,8 +109,9 @@ def _load_jsonl(path: Path, key_field: str) -> dict:
 
 
 def _append_jsonl(path: Path, rec: dict) -> None:
-    with path.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    line = json.dumps(rec, ensure_ascii=False) + "\n"
+    with _WRITE_LOCK, path.open("a", encoding="utf-8") as f:
+        f.write(line)
 
 
 def _building_key(title: str, address: str) -> str:
@@ -256,10 +267,76 @@ def _load_sampled(path: Path) -> list[dict]:
 # --- main ------------------------------------------------------------------
 
 
+def _geocode_one(client, station, key, station_cache) -> int:
+    """Geocode one station and cache it. Returns the number of API calls made (0 or 1)."""
+    geo = _geocode_station(client, station, key)
+    srec = {"station": station, **(geo or {"place_id": None})}
+    with _WRITE_LOCK:
+        station_cache[station] = srec
+    _append_jsonl(STATION_CACHE, srec)
+    return 1
+
+
+def _process_building(client, b, key, building_cache, station_cache, route_cache, abort) -> dict:
+    """Resolve one building's geocode + its uncached routes. Returns per-API call counts.
+
+    Station geocodes are assumed already populated (done in a prior phase), so this
+    only reads station_cache — no station writes here, which keeps the building phase
+    free of cross-building station races. Returns immediately if `abort` is set, so
+    queued work drains fast once the API is clearly failing.
+    """
+    counts = {"text_search": 0, "place_details": 0, "route_matrix_elements": 0}
+    if abort.is_set():
+        return counts
+    title, address = b["title"], b["address"]
+    bkey = _building_key(title, address)
+
+    if bkey not in building_cache:
+        pid = _places_text_search_id(client, f"{title} {address}", key)
+        counts["text_search"] += 1
+        rec = {"key": bkey, "place_id": pid}
+        if pid:
+            details = _place_details_essentials(client, pid, key)
+            counts["place_details"] += 1
+            if details:
+                rec.update(details)
+        with _WRITE_LOCK:
+            building_cache[bkey] = rec
+        _append_jsonl(BUILDING_CACHE, rec)
+    brec = building_cache[bkey]
+
+    if not (brec.get("place_id") and brec.get("lat") is not None):
+        return counts
+
+    pending: list[tuple] = []  # (station_place_id,)
+    for s in b["stations"]:
+        srec = station_cache.get(s["station"], {})
+        s_pid = srec.get("place_id")
+        if s_pid and _route_key(brec["place_id"], s_pid) not in route_cache:
+            pending.append(s_pid)
+    if pending:
+        results = _route_matrix_walk(client, (brec["lat"], brec["lon"]), pending, key, brec["place_id"])
+        counts["route_matrix_elements"] += len(pending)
+        by_idx = {r["dest_idx"]: r for r in results}
+        for idx, s_pid in enumerate(pending):
+            r = by_idx.get(idx, {})
+            rrec = {
+                "key": _route_key(brec["place_id"], s_pid),
+                "duration_s": r.get("duration_s"),
+                "distance_m": r.get("distance_m"),
+                "condition": r.get("condition"),
+            }
+            with _WRITE_LOCK:
+                route_cache[rrec["key"]] = rrec
+            _append_jsonl(ROUTE_CACHE, rrec)
+    return counts
+
+
 @click.command()
 @click.option("--limit", type=int, default=None, help="Process only the first N buildings (tiny-scale verification).")
 @click.option("--dry-run", is_flag=True, help="Report the number of new (billable) calls without making any.")
-def main(limit: int | None, dry_run: bool) -> None:
+@click.option("--workers", type=int, default=DEFAULT_WORKERS, show_default=True, help="Concurrent request workers.")
+def main(limit: int | None, dry_run: bool, workers: int) -> None:
     key = settings.google_maps_api_key
     if not key and not dry_run:
         raise click.ClickException("GOOGLE_MAPS_API_KEY is not set in .env.")
@@ -279,93 +356,62 @@ def main(limit: int | None, dry_run: bool) -> None:
     # Count work still to do (new = billable).
     new_b = sum(1 for b in buildings if _building_key(b["title"], b["address"]) not in building_cache)
     needed_stations = {s["station"] for b in buildings for s in b["stations"]}
-    new_s = sum(1 for st in needed_stations if st not in station_cache)
-    print(f"to fetch: {new_b:,} new buildings, {new_s:,} new stations (routes counted as resolved)")
+    new_s = sorted(st for st in needed_stations if st not in station_cache)
+    print(f"to fetch: {new_b:,} new buildings, {len(new_s):,} new stations (routes counted as resolved)")
 
     if dry_run:
         print("\n[dry-run] billable calls that WOULD be made:")
         print(f"  Place Details : {new_b:,}  (Text Search IDs-only is free)")
-        print(f"  Geocoding     : {new_s:,}")
+        print(f"  Geocoding     : {len(new_s):,}")
         print(f"  Route Matrix  : up to {total_pairs:,} elements (already-cached routes skipped)")
         print("  → all three SKUs have a 10k/month free tier.")
         return
 
-    rows: list[dict] = []
     api_calls = {"text_search": 0, "place_details": 0, "geocode": 0, "route_matrix_elements": 0}
-    consecutive_errors = 0
 
     with httpx.Client() as client:
-        for i, b in enumerate(buildings, 1):
-            title, address, ward = b["title"], b["address"], b["ward"]
-            bkey = _building_key(title, address)
-            try:
-                # 1. building geocode (cached)
-                if bkey not in building_cache:
-                    pid = _places_text_search_id(client, f"{title} {address}", key)
-                    api_calls["text_search"] += 1
-                    rec = {"key": bkey, "place_id": pid}
-                    if pid:
-                        details = _place_details_essentials(client, pid, key)
-                        api_calls["place_details"] += 1
-                        if details:
-                            rec.update(details)
-                    building_cache[bkey] = rec
-                    _append_jsonl(BUILDING_CACHE, rec)
-                brec = building_cache[bkey]
+        # Phase 1: geocode all missing stations first (deduped), so the building
+        # phase only reads station_cache and never races on the same station.
+        if new_s:
+            print(f"\n[phase 1] geocoding {len(new_s):,} stations with {workers} workers...")
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                futures = {pool.submit(_geocode_one, client, st, key, station_cache): st for st in new_s}
+                for fut in as_completed(futures):
+                    api_calls["geocode"] += fut.result()
 
-                # 2. station geocodes (cached, shared across buildings)
-                for s in b["stations"]:
-                    st = s["station"]
-                    if st not in station_cache:
-                        geo = _geocode_station(client, st, key)
-                        api_calls["geocode"] += 1
-                        srec = {"station": st, **(geo or {"place_id": None})}
-                        station_cache[st] = srec
-                        _append_jsonl(STATION_CACHE, srec)
+        # Phase 2: process buildings concurrently (geocode + routes).
+        print(f"\n[phase 2] processing {len(buildings):,} buildings with {workers} workers...")
+        abort = threading.Event()
+        errors = 0
+        done = 0
+        start = time.time()
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {
+                pool.submit(_process_building, client, b, key, building_cache, station_cache, route_cache, abort): b
+                for b in buildings
+            }
+            for fut in as_completed(futures):
+                b = futures[fut]
+                try:
+                    counts = fut.result()
+                    for k, v in counts.items():
+                        api_calls[k] += v
+                except httpx.HTTPError as e:
+                    errors += 1
+                    print(f"  ERROR on {b['title']!r}: {e} (total errors={errors})")
+                    if errors >= MAX_ERRORS and not abort.is_set():
+                        abort.set()
+                        print(f"  too many errors ({errors}); draining queue. Progress is cached — fix and re-run.")
+                done += 1
+                if done % 250 == 0 or done == len(buildings):
+                    rate = done / max(time.time() - start, 1e-6)
+                    eta = (len(buildings) - done) / rate if rate else 0
+                    print(f"  [{done:,}/{len(buildings):,}] {rate:.1f} bldg/s  ETA {eta / 60:.1f}min  errors={errors}")
 
-                # 3. routes — one matrix call per building for uncached, resolvable pairs
-                b_resolved = bool(brec.get("place_id") and brec.get("lat") is not None)
-                pending: list[tuple] = []  # (station_dict, station_place_id)
-                if b_resolved:
-                    for s in b["stations"]:
-                        srec = station_cache[s["station"]]
-                        s_pid = srec.get("place_id")
-                        if not s_pid:
-                            continue
-                        rkey = _route_key(brec["place_id"], s_pid)
-                        if rkey not in route_cache:
-                            pending.append((s, s_pid))
-                    if pending:
-                        results = _route_matrix_walk(
-                            client, (brec["lat"], brec["lon"]), [p[1] for p in pending], key, brec["place_id"]
-                        )
-                        api_calls["route_matrix_elements"] += len(pending)
-                        by_idx = {r["dest_idx"]: r for r in results}
-                        for idx in range(len(pending)):
-                            s_pid = pending[idx][1]
-                            r = by_idx.get(idx, {})
-                            rrec = {
-                                "key": _route_key(brec["place_id"], s_pid),
-                                "duration_s": r.get("duration_s"),
-                                "distance_m": r.get("distance_m"),
-                                "condition": r.get("condition"),
-                            }
-                            route_cache[rrec["key"]] = rrec
-                            _append_jsonl(ROUTE_CACHE, rrec)
-
-                consecutive_errors = 0
-            except httpx.HTTPError as e:
-                consecutive_errors += 1
-                print(f"  [{i}/{len(buildings)}] ERROR on {title!r}: {e} (consecutive={consecutive_errors})")
-                if consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
-                    print(f"  aborting after {MAX_CONSECUTIVE_ERRORS} consecutive errors (likely quota/auth).")
-                    break
-                continue
-
-            # 4. assemble output rows for this building
-            rows.extend(_build_rows(b, title, address, ward, building_cache, station_cache, route_cache))
-            if i % 250 == 0:
-                print(f"  [{i}/{len(buildings)}] processed")
+    # Assemble output rows from the now-populated caches.
+    rows: list[dict] = []
+    for b in buildings:
+        rows.extend(_build_rows(b, b["title"], b["address"], b["ward"], building_cache, station_cache, route_cache))
 
     _write_output(rows)
     print(f"\nwrote {len(rows):,} rows: {OUTPUT_CSV}")
