@@ -22,7 +22,7 @@ Caveats surfaced in the captions/summary:
   * Very short walks have fixed-overhead pace (low m/min) → the speed chart's left
     tail; the x-axis is clipped for readability (counts preserved in summary).
 
-No API calls. Reads data/020_finalize_walk_times/walk_times.csv.
+No API calls. Reads data/022_clean_walk_times/walk_times.csv.
 """
 
 import json
@@ -92,7 +92,7 @@ def _despine(ax) -> None:
 
 def chart_gap_distribution(df: pd.DataFrame, k: dict, bold: fm.FontProperties) -> None:
     fig, ax = plt.subplots(figsize=(8.4, 5.2))
-    lo, hi, step = -6, 12, 0.5
+    lo, hi, step = -6, 8, 0.5
     bins = [lo + i * step for i in range(int((hi - lo) / step) + 1)]
     # explicit bins drop out-of-range values (no false pile-up bar at the edges)
     counts, edges, patches = ax.hist(df["error_width_min"], bins=bins, edgecolor=PAPER, linewidth=0.6)
@@ -239,7 +239,7 @@ def chart_speed(df: pd.DataFrame, k: dict, bold: fm.FontProperties) -> None:
 
 def main() -> None:
     bold = _setup_style()
-    df = pd.read_csv(INPUT_CSV)  # already cleaned by exp/021
+    df = pd.read_csv(INPUT_CSV)  # already cleaned by exp/022
     df["dist_implied"] = df["distance_m"] / SUUMO_METERS_PER_MIN
     df["dist_comp"] = df["dist_implied"] - df["stated_min"]
     df["pace_comp"] = df["actual_min"] - df["dist_implied"]
