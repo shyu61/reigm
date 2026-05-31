@@ -37,7 +37,7 @@ from matplotlib import font_manager as fm
 
 SCRIPT_PATH = Path(__file__).resolve()
 DATA_DIR = SCRIPT_PATH.parent.parent / "data"
-# Cleaned dataset from exp/022 (outliers already removed); pipeline: 018→020→021→022→023.
+# Cleaned dataset from exp/022 (outliers already removed); pipeline: 018→020→021→022→024.
 INPUT_CSV = DATA_DIR / "022_clean_walk_times" / "walk_times.csv"
 OUTPUT_DIR = DATA_DIR / SCRIPT_PATH.stem
 
