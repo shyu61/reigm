@@ -169,6 +169,17 @@ HTML_TEMPLATE = """<!doctype html>
       .anno.mean {
         fill: var(--steel);
       }
+
+      .callout {
+        font-size: 38px;
+        font-weight: 900;
+        fill: var(--accent);
+      }
+      .callout-sub {
+        font-size: 18px;
+        font-weight: 700;
+        fill: var(--accent);
+      }
     </style>
   </head>
   <body>
@@ -280,8 +291,39 @@ HTML_TEMPLATE = """<!doctype html>
         text.append("tspan").text(label + " ");
         text.append("tspan").attr("class", "val").text(val);
       }
-      annotate("median", K.median, "中央値", `+${K.median.toFixed(2)}分`, 0.16, 26);
-      annotate("mean", K.mean, "平均", `+${K.mean.toFixed(2)}分`, 0.34, 26);
+      annotate(
+        "median",
+        K.median,
+        "中央値",
+        `+${K.median.toFixed(2)}分（+${(K.median_rate * 100).toFixed(1)}%）`,
+        0.16,
+        26,
+      );
+      annotate(
+        "mean",
+        K.mean,
+        "平均",
+        `+${K.mean.toFixed(2)}分（+${(K.mean_rate * 100).toFixed(1)}%）`,
+        0.34,
+        26,
+      );
+
+      // --- conclusion-first callout (right side, over the "longer" mass) ---
+      const calloutX = PLOT_W - 12;
+      plot
+        .append("text")
+        .attr("class", "callout-sub")
+        .attr("x", calloutX)
+        .attr("y", PLOT_H * 0.46)
+        .attr("text-anchor", "end")
+        .text("表記より長い");
+      plot
+        .append("text")
+        .attr("class", "callout")
+        .attr("x", calloutX)
+        .attr("y", PLOT_H * 0.46 + 38)
+        .attr("text-anchor", "end")
+        .text(`${(K.share_longer * 100).toFixed(0)}%`);
 
       // --- axis titles ---
       plot
@@ -321,7 +363,9 @@ def main() -> None:
     bins = _histogram(df["error_width_min"])
     kpi = {
         "median": round(df["error_width_min"].median(), 3),
+        "median_rate": round(df["error_rate"].median(), 4),  # median of per-property %; scales with walk length
         "mean": round(df["error_width_min"].mean(), 3),
+        "mean_rate": round(df["error_rate"].mean(), 4),  # mean of per-property %; short walks pull it above the median
         "share_longer": round((df["error_width_min"] > 0).mean(), 4),
     }
     n = len(df)
